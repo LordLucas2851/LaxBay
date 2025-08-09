@@ -5,10 +5,23 @@ import { useNavigate } from "react-router-dom";
 // Environment variable for backend base URL
 const API = import.meta.env.VITE_API_URL;
 
+/**
+ * Search page for browsing lacrosse listings.  This component wraps the
+ * search and filter inputs in a card, uses a responsive grid for results
+ * and featured posts, and maintains all existing functionality.  The
+ * styling aims to evoke a modern e‑commerce experience similar to eBay
+ * or SidelineSwap, with clean spacing, subtle shadows, and clear
+ * typographic hierarchy.
+ */
 export default function SearchEngine() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
-  const [filters, setFilters] = useState({ location: "", minPrice: "", maxPrice: "", category: "" });
+  const [filters, setFilters] = useState({
+    location: "",
+    minPrice: "",
+    maxPrice: "",
+    category: "",
+  });
   const [previewPosts, setPreviewPosts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
@@ -33,7 +46,10 @@ export default function SearchEngine() {
         const response = await axios.get(`${API}/store/search`, {
           params: { query: "", ...filters },
         });
-        setPreviewPosts(response.data.sort(() => 0.5 - Math.random()).slice(0, 5));
+        // Randomise and slice to get a handful of featured posts
+        setPreviewPosts(
+          response.data.sort(() => 0.5 - Math.random()).slice(0, 6)
+        );
       } catch (err) {
         console.error("Error fetching preview posts:", err);
       }
@@ -48,54 +64,58 @@ export default function SearchEngine() {
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <h2 className="text-2xl font-bold mb-4">Search Listings</h2>
-      <input
-        className="w-full p-2 border mb-4 rounded"
-        type="text"
-        placeholder="Search lacrosse gear..."
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-      />
+    <div className="max-w-7xl mx-auto px-4 py-8">
+      <h2 className="text-3xl font-bold text-gray-800 mb-6">Browse Gear</h2>
 
-      <div className="flex flex-wrap gap-4 mb-6">
-        <div className="flex-1 min-w-[200px]">
+      {/* Card containing search and filter inputs */}
+      <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <input
-            className="w-full p-2 border rounded"
+            className="border border-gray-300 rounded-md px-4 py-2 w-full"
+            type="text"
+            placeholder="Search lacrosse gear..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+
+          <input
+            className="border border-gray-300 rounded-md px-4 py-2 w-full"
             type="text"
             placeholder="Location"
             value={filters.location}
-            onChange={(e) => setFilters({ ...filters, location: e.target.value })}
+            onChange={(e) =>
+              setFilters({ ...filters, location: e.target.value })
+            }
           />
-        </div>
 
-        <div className="flex-1 min-w-[200px]">
           <input
-            className="w-full p-2 border rounded"
+            className="border border-gray-300 rounded-md px-4 py-2 w-full"
             type="number"
             placeholder="Min Price"
             value={filters.minPrice}
-            onChange={(e) => setFilters({ ...filters, minPrice: e.target.value })}
+            onChange={(e) =>
+              setFilters({ ...filters, minPrice: e.target.value })
+            }
           />
-        </div>
 
-        <div className="flex-1 min-w-[200px]">
           <input
-            className="w-full p-2 border rounded"
+            className="border border-gray-300 rounded-md px-4 py-2 w-full"
             type="number"
             placeholder="Max Price"
             value={filters.maxPrice}
-            onChange={(e) => setFilters({ ...filters, maxPrice: e.target.value })}
+            onChange={(e) =>
+              setFilters({ ...filters, maxPrice: e.target.value })
+            }
           />
-        </div>
 
-        <div className="flex-1 min-w-[200px]">
           <select
-            className="w-full p-2 border rounded"
+            className="border border-gray-300 rounded-md px-4 py-2 w-full"
             value={filters.category}
-            onChange={(e) => setFilters({ ...filters, category: e.target.value })}
+            onChange={(e) =>
+              setFilters({ ...filters, category: e.target.value })
+            }
           >
-            <option value="">Select Category</option>
+            <option value="">All Categories</option>
             <option value="Sticks">Sticks</option>
             <option value="Gloves">Gloves</option>
             <option value="Helmets">Helmets</option>
@@ -105,51 +125,61 @@ export default function SearchEngine() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        {results.length > 0 ? (
-          results.map((post) => (
+      {/* Results grid */}
+      {results.length > 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
+          {results.map((post) => (
             <div
               key={post.id}
-              className="border p-4 rounded shadow cursor-pointer"
+              className="bg-white rounded-lg shadow-md hover:shadow-lg transition cursor-pointer overflow-hidden"
               onClick={() => handlePostClick(post.id)}
             >
               <img
                 src={`${API}/${post.image.replace(/\\/g, "/")}`}
                 alt={post.title}
-                className="w-full h-40 object-cover rounded"
+                className="w-full h-48 object-cover"
               />
-              <h3 className="text-xl font-bold mt-2">{post.title}</h3>
-              <p className="text-sm">{post.description}</p>
-              <p className="font-semibold">${post.price}</p>
-              <p className="text-xs text-gray-500">Posted by {post.username} in {post.location}</p>
+              <div className="p-4">
+                <h3 className="text-xl font-bold mb-1">{post.title}</h3>
+                <p className="text-sm text-gray-600 mb-2">{post.description}</p>
+                <p className="font-semibold text-indigo-600 mb-1">\${post.price}</p>
+                <p className="text-xs text-gray-500">
+                  {post.username} • {post.location}
+                </p>
+              </div>
             </div>
-          ))
-        ) : isLoading ? (
-          <p>Loading results...</p>
-        ) : (
-          <p>No results found.</p>
-        )}
-      </div>
+          ))}
+        </div>
+      ) : isLoading ? (
+        <p>Loading results...</p>
+      ) : (
+        <p>No results found.</p>
+      )}
 
+      {/* Featured listings shown only when there are no search results */}
       {results.length === 0 && !isLoading && (
         <div>
-          <h3 className="text-xl font-semibold mb-4">Featured Listings</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <h3 className="text-2xl font-semibold mb-4">Featured Listings</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {previewPosts.map((post) => (
               <div
                 key={post.id}
-                className="border p-4 rounded shadow cursor-pointer"
+                className="bg-white rounded-lg shadow-md hover:shadow-lg transition cursor-pointer overflow-hidden"
                 onClick={() => handlePostClick(post.id)}
               >
                 <img
                   src={`${API}/${post.image.replace(/\\/g, "/")}`}
                   alt={post.title}
-                  className="w-full h-40 object-cover rounded"
+                  className="w-full h-48 object-cover"
                 />
-                <h3 className="text-xl font-bold mt-2">{post.title}</h3>
-                <p className="text-sm">{post.description}</p>
-                <p className="font-semibold">${post.price}</p>
-                <p className="text-xs text-gray-500">Posted by {post.username} in {post.location}</p>
+                <div className="p-4">
+                  <h3 className="text-xl font-bold mb-1">{post.title}</h3>
+                  <p className="text-sm text-gray-600 mb-2">{post.description}</p>
+                  <p className="font-semibold text-indigo-600 mb-1">\${post.price}</p>
+                  <p className="text-xs text-gray-500">
+                    {post.username} • {post.location}
+                  </p>
+                </div>
               </div>
             ))}
           </div>

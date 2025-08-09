@@ -14,10 +14,10 @@ import {
 } from "lucide-react";
 
 /**
- * Navigation bar that adapts its links based on the user’s login state.
- * The styling has been updated to use a deep blue background and lighter
- * hover colours for a more polished, professional appearance.  We also
- * rename icons to avoid naming conflicts with HTML elements.
+ * Navigation bar with refined styling to better accommodate the new LaxBay
+ * logo.  The logo’s height has been reduced and margins tightened so it
+ * integrates seamlessly with the text links.  Colours and hover states
+ * remain consistent with the rest of the site’s palette.
  */
 export default function NavBar() {
   const { logStatus, setLogStatus } = useContext(DataContext);
@@ -31,8 +31,8 @@ export default function NavBar() {
 
   return (
     <nav className="flex justify-between items-center px-8 py-5 bg-blue-900 text-white shadow-lg text-lg font-semibold rounded-b-xl">
-      <div className="flex items-center space-x-10">
-        <img src={logo} alt="LaxBay Logo" className="h-10 w-auto mr-6" />
+      <div className="flex items-center space-x-8">
+        <img src={logo} alt="LaxBay Logo" className="h-8 w-auto mr-4" />
 
         <Link to="/" className="flex items-center gap-2 hover:text-blue-300 transition">
           <HomeIcon size={20} /> Home
@@ -56,7 +56,6 @@ export default function NavBar() {
           </>
         )}
       </div>
-
       <div>
         {logStatus ? (
           <div className="flex items-center gap-5">
