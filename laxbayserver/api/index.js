@@ -16,12 +16,17 @@ dotenv.config();
 
 const app = express();
 
+// Trust the first proxy.  Required for secure cookies when behind proxies like Render
+app.set('trust proxy', 1);
+
 // List of allowed origins for CORS.  Include localhost ports for development and your deployed frontend.
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5174",
   "http://localhost:5175",
   "https://lax-bay.vercel.app",
+  // Add your Render backend domain to allow CORS from server-side requests
+  "https://laxbay.onrender.com",
 ];
 
 app.use(
