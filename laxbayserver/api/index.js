@@ -16,39 +16,48 @@ dotenv.config();
 
 const app = express();
 
+// List of allowed origins for CORS.  Include localhost ports for development and your deployed frontend.
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5174",
   "http://localhost:5175",
+  "https://lax-bay.vercel.app",
 ];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (allowedOrigins.includes(origin) || !origin) {
+      // Allow requests with no origin (like mobile apps or curl) or if origin is in the whitelist
+      if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
         callback(new Error("CORS policy: Not allowed origin"), false);
       }
     },
-    credentials: true, 
+    credentials: true,
   })
 );
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.use('/uploads', express.static('uploads'));
+// Serve uploaded images statically
+app.use("/uploads", express.static("uploads"));
 
+// Configure session cookies.  Use secure cookies and proper sameSite in production
 app.use(
   session({
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false }, 
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    },
   })
 );
 
+// Mount routers
 app.use("/store/register", registerRouter);
 app.use("/store/login", loginRouter);
 app.use("/store/create", postingRouter);
@@ -59,6 +68,7 @@ app.use("/store/search", searchRouter);
 app.use("/store", listingRouter);
 app.use("/user", userRouter);
 
+// Healthcheck
 app.get("/", (req, res) => {
   try {
     res.send("Hello from Express Server");
@@ -68,9 +78,12 @@ app.get("/", (req, res) => {
   }
 });
 
+// Global error handler
 app.use((err, req, res, next) => {
   console.error("Server Error:", err);
   res.status(500).json({ error: err.message });
 });
 
-app.listen(3000, () => console.log("Server running on port 3000"));
+// Listen on the port provided by the hosting platform or default to 3000
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
