@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom"; 
+import { useNavigate } from "react-router-dom";
+
+// Environment variable for backend base URL
+const API = import.meta.env.VITE_API_URL;
 
 export default function SearchEngine() {
   const [query, setQuery] = useState("");
@@ -8,13 +11,13 @@ export default function SearchEngine() {
   const [filters, setFilters] = useState({ location: "", minPrice: "", maxPrice: "", category: "" });
   const [previewPosts, setPreviewPosts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const navigate = useNavigate(); 
+  const navigate = useNavigate();
 
   useEffect(() => {
     const fetchResults = async () => {
       setIsLoading(true);
       try {
-        const response = await axios.get("http://localhost:3000/store/search", {
+        const response = await axios.get(`${API}/store/search`, {
           params: { query, ...filters },
         });
         setResults(response.data);
@@ -27,7 +30,7 @@ export default function SearchEngine() {
 
     const fetchPreviewPosts = async () => {
       try {
-        const response = await axios.get("http://localhost:3000/store/search", {
+        const response = await axios.get(`${API}/store/search`, {
           params: { query: "", ...filters },
         });
         setPreviewPosts(response.data.sort(() => 0.5 - Math.random()).slice(0, 5));
@@ -41,7 +44,7 @@ export default function SearchEngine() {
   }, [query, filters]);
 
   const handlePostClick = (postId) => {
-    navigate(`/postdetails/${postId}`); 
+    navigate(`/postdetails/${postId}`);
   };
 
   return (
@@ -108,10 +111,10 @@ export default function SearchEngine() {
             <div
               key={post.id}
               className="border p-4 rounded shadow cursor-pointer"
-              onClick={() => handlePostClick(post.id)} 
+              onClick={() => handlePostClick(post.id)}
             >
               <img
-                src={`http://localhost:3000/${post.image.replace(/\\/g, "/")}`}
+                src={`${API}/${post.image.replace(/\\/g, "/")}`}
                 alt={post.title}
                 className="w-full h-40 object-cover rounded"
               />
@@ -136,10 +139,10 @@ export default function SearchEngine() {
               <div
                 key={post.id}
                 className="border p-4 rounded shadow cursor-pointer"
-                onClick={() => handlePostClick(post.id)} 
+                onClick={() => handlePostClick(post.id)}
               >
                 <img
-                  src={`http://localhost:3000/${post.image.replace(/\\/g, "/")}`}
+                  src={`${API}/${post.image.replace(/\\/g, "/")}`}
                   alt={post.title}
                   className="w-full h-40 object-cover rounded"
                 />

@@ -1,19 +1,22 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom"; 
+import { useNavigate } from "react-router-dom";
+
+// Use environment variable for API base URL
+const API = import.meta.env.VITE_API_URL;
 
 function UserPostsPage() {
   const [posts, setPosts] = useState([]);
   const [expandedPostId, setExpandedPostId] = useState(null);
-  const navigate = useNavigate(); 
-  
+  const navigate = useNavigate();
+
   useEffect(() => {
     fetchUserPosts();
   }, []);
 
   const fetchUserPosts = async () => {
     try {
-      const response = await axios.get("http://localhost:3000/store/user", {
+      const response = await axios.get(`${API}/store/user`, {
         withCredentials: true,
       });
       setPosts(response.data);
@@ -24,9 +27,9 @@ function UserPostsPage() {
 
   const handleDelete = async (postId) => {
     try {
-      await axios.delete(`http://localhost:3000/store/user/${postId}`, {
+      await axios.delete(`${API}/store/user/${postId}`, {
         withCredentials: true,
-      });      
+      });
       setPosts(posts.filter((post) => post.id !== postId));
     } catch (error) {
       console.error("Error deleting post:", error);
@@ -53,36 +56,35 @@ function UserPostsPage() {
             >
               {/* Post Title */}
               <h3 className="text-2xl font-semibold text-center mb-1">{post.title}</h3>
-
               {/* Post Category */}
               <p className="text-base text-gray-500 text-center mb-2">{post.category}</p>
-
               {/* Post Image */}
               {post.image && (
                 <div className="mb-4">
                   <img
-  src={`http://localhost:3000/${post.image.replace(/\\/g, "/")}`}
-  alt="Post Image"
-  className="w-32 h-32 object-cover"
-/>
-
+                    src={`${API}/${post.image.replace(/\\/g, "/")}`}
+                    alt="Post Image"
+                    className="w-32 h-32 object-cover"
+                  />
                 </div>
               )}
-
               {/* Expanded content */}
               {expandedPostId === post.id && (
                 <div className="text-center">
                   {/* Description */}
-                  <p className="text-lg text-gray-700 font-medium mb-4 px-2">{post.description}</p>
-
+                  <p className="text-lg text-gray-700 font-medium mb-4 px-2">
+                    {post.description}
+                  </p>
                   {/* Price */}
-                  <p className="text-base text-gray-800 mb-1"><strong className="text-gray-900">Price:</strong> <span className="font-semibold">${post.price}</span></p>
-
+                  <p className="text-base text-gray-800 mb-1">
+                    <strong className="text-gray-900">Price:</strong> <span className="font-semibold">${post.price}</span>
+                  </p>
                   {/* Location */}
-                  <p className="text-base text-gray-800 mb-2"><strong className="text-gray-900">Location:</strong> {post.location}</p>
+                  <p className="text-base text-gray-800 mb-2">
+                    <strong className="text-gray-900">Location:</strong> {post.location}
+                  </p>
                 </div>
               )}
-
               {/* Delete Button */}
               <button
                 onClick={(e) => {
@@ -95,7 +97,7 @@ function UserPostsPage() {
               </button>
               <button
                 onClick={() => navigate(`/edit/${post.id}`)}
-                  className="bg-blue-500 text-white px-2 py-1 rounded"
+                className="bg-blue-500 text-white px-2 py-1 rounded"
               >
                 Edit
               </button>

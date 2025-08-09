@@ -1,9 +1,12 @@
 import React, { useState } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom"; 
+import { useNavigate } from "react-router-dom";
+
+// Use environment variable for backend base URL
+const API = import.meta.env.VITE_API_URL;
 
 const CreatePost = () => {
-  const navigate = useNavigate(); 
+  const navigate = useNavigate();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
@@ -53,24 +56,26 @@ const CreatePost = () => {
     formData.append("description", description);
     formData.append("price", price);
     formData.append("category", category);
-    formData.append("location", sessionStorage.getItem("city") || ""); 
+    formData.append("location", sessionStorage.getItem("city") || "");
 
     if (image) {
       formData.append("image", image);
     }
 
     try {
-      const response = await axios.post("http://localhost:3000/store/create", formData, {
+      const response = await axios.post(`${API}/store/create`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
-        withCredentials: true, 
+        withCredentials: true,
       });
       console.log(response.data);
       alert("Post created successfully!");
-
-      navigate("/");  
+      navigate("/");
     } catch (error) {
       console.error("Error creating post:", error.response ? error.response.data : error.message);
-      alert("Error creating post: " + (error.response ? error.response.data.error : error.message));
+      alert(
+        "Error creating post: " +
+          (error.response ? error.response.data.error : error.message)
+      );
     }
   };
 
@@ -135,7 +140,9 @@ const CreatePost = () => {
           onChange={handleImageChange}
           required
         />
-        {imagePreview && <img src={imagePreview} alt="Preview" className="w-full mt-2" />}
+        {imagePreview && (
+          <img src={imagePreview} alt="Preview" className="w-full mt-2" />
+        )}
         {errors.image && <span className="text-red-600">{errors.image}</span>}
 
         <button

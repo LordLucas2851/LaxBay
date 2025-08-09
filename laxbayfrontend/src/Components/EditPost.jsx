@@ -2,6 +2,9 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useNavigate, useParams } from "react-router-dom";
 
+// Backend base URL
+const API = import.meta.env.VITE_API_URL;
+
 const EditPost = () => {
   const { postId } = useParams();
   const [title, setTitle] = useState("");
@@ -11,14 +14,14 @@ const EditPost = () => {
   const [location, setLocation] = useState("");
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
-  const [currentImage, setCurrentImage] = useState(""); 
+  const [currentImage, setCurrentImage] = useState("");
   const [errors, setErrors] = useState({});
   const navigate = useNavigate();
 
   useEffect(() => {
     const fetchPost = async () => {
       try {
-        const response = await axios.get(`http://localhost:3000/store/user/post/${postId}`, {
+        const response = await axios.get(`${API}/store/user/post/${postId}`, {
           withCredentials: true,
         });
 
@@ -29,7 +32,7 @@ const EditPost = () => {
           setCategory(response.data.category || "");
           setLocation(response.data.location || "");
           setCurrentImage(response.data.image || "");
-          setImagePreview(""); 
+          setImagePreview("");
         }
       } catch (error) {
         console.error("Error fetching post data:", error);
@@ -45,7 +48,7 @@ const EditPost = () => {
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     setImage(file);
-    setImagePreview(URL.createObjectURL(file)); 
+    setImagePreview(URL.createObjectURL(file));
   };
 
   const validateForm = () => {
@@ -70,7 +73,6 @@ const EditPost = () => {
 
     const formErrors = validateForm();
     setErrors(formErrors);
-
     if (Object.keys(formErrors).length > 0) {
       return;
     }
@@ -80,16 +82,16 @@ const EditPost = () => {
     formData.append("description", description);
     formData.append("price", price);
     formData.append("category", category);
-    formData.append("location", sessionStorage.getItem("city") || ""); 
+    formData.append("location", sessionStorage.getItem("city") || "");
 
     if (image) {
-      formData.append("image", image); 
+      formData.append("image", image);
     } else {
-      formData.append("image", currentImage); 
+      formData.append("image", currentImage);
     }
 
     try {
-      const response = await axios.put(`http://localhost:3000/store/user/update/${postId}`, formData, {
+      const response = await axios.put(`${API}/store/user/update/${postId}`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
         withCredentials: true,
       });
@@ -98,7 +100,10 @@ const EditPost = () => {
       navigate(-1);
     } catch (error) {
       console.error("Error updating post:", error.response ? error.response.data : error.message);
-      alert("Error updating post: " + (error.response ? error.response.data.error : error.message));
+      alert(
+        "Error updating post: " +
+          (error.response ? error.response.data.error : error.message)
+      );
     }
   };
 
@@ -159,7 +164,7 @@ const EditPost = () => {
           <label className="block text-lg font-semibold mb-1">Current Image</label>
           {currentImage && !imagePreview && (
             <img
-              src={`http://localhost:3000/${currentImage.replace(/\\/g, "/")}`}
+              src={`${API}/${currentImage.replace(/\\/g, "/")}`}
               alt="Current Post Image"
               className="w-32 h-32 object-cover mb-4"
             />
@@ -173,9 +178,7 @@ const EditPost = () => {
           className="w-full border p-2 rounded"
           onChange={handleImageChange}
         />
-        {imagePreview && (
-          <img src={imagePreview} alt="Preview" className="w-32 h-32 object-cover mt-2" />
-        )}
+        {imagePreview && <img src={imagePreview} alt="Preview" className="w-32 h-32 object-cover mt-2" />}
         {errors.image && <span className="text-red-600">{errors.image}</span>}
 
         <button
