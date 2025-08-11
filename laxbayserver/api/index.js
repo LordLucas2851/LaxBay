@@ -1,7 +1,11 @@
+// index.js (ESM)
 import express from "express";
 import cors from "cors";
 import session from "express-session";
 import dotenv from "dotenv";
+import connectPgSimple from "connect-pg-simple";
+
+// Routers
 import registerRouter from "./Routes/RegisterRoute.js";
 import loginRouter from "./Routes/LoginRoute.js";
 import postingRouter from "./Routes/PostingRoute.js";
@@ -16,71 +20,70 @@ dotenv.config();
 
 const app = express();
 
-// Trust the first proxy.  Required for secure cookies when behind proxies like Render
-app.set('trust proxy', 1);
+// Required for secure cookies behind Vercel/any proxy
+app.set("trust proxy", 1);
 
-// List of allowed origins for CORS.  Include localhost ports for development and your deployed frontend.
+// --- CORS ---
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5174",
   "http://localhost:5175",
-  "https://lax-bay.vercel.app",
-  // Add your Render backend domain to allow CORS from server-side requests
-  "https://laxbay.onrender.com",
+  "https://lax-bay.vercel.app", // your frontend on Vercel
 ];
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl) or if origin is in the whitelist
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("CORS policy: Not allowed origin"), false);
-      }
+    origin(origin, cb) {
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error("CORS policy: Not allowed origin"), false);
     },
-    credentials: true,
+    credentials: true, // allow cookies
   })
 );
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded images statically
+// NOTE: Vercel's filesystem is ephemeral. This will serve files that exist
+// in the deployment, but uploaded files won't persist across deployments.
+// Keep for now if you already reference /uploads/... in image URLs.
 app.use("/uploads", express.static("uploads"));
 
-// Configure session cookies.  Use secure cookies and proper sameSite in production
+// --- Sessions (persisted; required on Vercel) ---
+const PgSession = connectPgSimple(session);
+
 app.use(
   session({
-    secret: process.env.SESSION_SECRET,
+    store: new PgSession({
+      conString: process.env.DATABASE_URL, // Neon/PG connection string
+      createTableIfMissing: true,
+    }),
+    secret: process.env.SESSION_SECRET, // set in Vercel env
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      httpOnly: true,
+      secure: true,       // Vercel is HTTPS
+      sameSite: "none",   // cross‑site cookies (frontend ↔ backend)
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 1 week
     },
   })
 );
 
-// Mount routers
-app.use("/store/register", registerRouter);
-app.use("/store/login", loginRouter);
-app.use("/store/create", postingRouter);
-app.use("/store/user", userPostRouter);
-app.use("/store/chat", chatBotRouter);
-app.use("/store/admin", adminRouter);
-app.use("/store/search", searchRouter);
-app.use("/store", listingRouter);
-app.use("/user", userRouter);
+// ---------------- API ROUTES (now all under /api) ----------------
+app.use("/api/store/register", registerRouter);
+app.use("/api/store/login", loginRouter);
+app.use("/api/store/create", postingRouter);
+app.use("/api/store/user", userPostRouter);
+app.use("/api/store/chat", chatBotRouter);
+app.use("/api/store/admin", adminRouter);
+app.use("/api/store/search", searchRouter);
+app.use("/api/store", listingRouter);
+app.use("/api/user", userRouter);
 
 // Healthcheck
-app.get("/", (req, res) => {
-  try {
-    res.send("Hello from Express Server");
-  } catch (error) {
-    console.error("Query error:", error);
-    res.send("Sorry, error");
-  }
+app.get("/api", (req, res) => {
+  res.send("Hello from Express Server");
 });
 
 // Global error handler
@@ -89,6 +92,5 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message });
 });
 
-// Listen on the port provided by the hosting platform or default to 3000
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// IMPORTANT: Do NOT app.listen on Vercel. Export the app instead.
+export default app;
