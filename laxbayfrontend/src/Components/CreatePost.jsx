@@ -15,6 +15,9 @@ const CreatePost = () => {
   const [imagePreview, setImagePreview] = useState(null);
   const [errors, setErrors] = useState({});
 
+  // ✅ Pull your backend base URL from env
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     setImage(file);
@@ -63,7 +66,7 @@ const CreatePost = () => {
     }
 
     try {
-      const response = await axios.post(`${API}/store/create`, formData, {
+      const response = await axios.post(`${API_BASE_URL}/store/create`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
         withCredentials: true,
       });

@@ -21,7 +21,7 @@ const EditPost = () => {
   useEffect(() => {
     const fetchPost = async () => {
       try {
-        const response = await axios.get(`${API}/store/user/post/${postId}`, {
+        const response = await axios.get(`${API_URL}/store/user/post/${postId}`, {
           withCredentials: true,
         });
 
@@ -91,7 +91,7 @@ const EditPost = () => {
     }
 
     try {
-      const response = await axios.put(`${API}/store/user/update/${postId}`, formData, {
+      const response = await axios.put(`${API_URL}/store/user/update/${postId}`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
         withCredentials: true,
       });
@@ -164,7 +164,7 @@ const EditPost = () => {
           <label className="block text-lg font-semibold mb-1">Current Image</label>
           {currentImage && !imagePreview && (
             <img
-              src={`${API}/${currentImage.replace(/\\/g, "/")}`}
+              src={`${API_URL}/${currentImage.replace(/\\/g, "/")}`}
               alt="Current Post Image"
               className="w-32 h-32 object-cover mb-4"
             />

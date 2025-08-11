@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import axios from "axios";
+import apiClient from "./apiClient";  // adjust path if needed
 import { useNavigate } from "react-router-dom";
 
 export default function AdminPanel() {
@@ -23,8 +23,8 @@ export default function AdminPanel() {
       setLoading(true);
       setFetchError(null);
       try {
-        const res = await api.get("/store/admin/listings");
-        if (alive) setListings(Array.isArray(res.data) ? res.data : []);
+        const res = await apiClient.get("/store/admin/listings");
+        setListings(res.data);
       } catch (err) {
         console.error("Failed to fetch listings:", err);
         if (alive) setFetchError(err?.message || "Failed to fetch listings");
@@ -38,8 +38,8 @@ export default function AdminPanel() {
   const handleDelete = async (postId) => {
     if (!window.confirm("Are you sure you want to delete this post?")) return;
     try {
-      await api.delete(`/store/admin/posts/${postId}`);
-      setListings((prev) => prev.filter((p) => p.id !== postId));
+      await apiClient.delete(`/store/admin/posts/${postId}`);
+      setListings(listings.filter((post) => post.id !== postId));
     } catch (error) {
       console.error("Delete failed:", error);
       alert("Failed to delete post.");
@@ -89,13 +89,11 @@ export default function AdminPanel() {
             onClick={() => toggleExpand(post.id)}
             className="border p-4 rounded shadow bg-white hover:shadow-lg transition-transform transform hover:scale-105 cursor-pointer"
           >
-            {!!post.image && (
-              <img
-                src={imageUrl(post.image)}
-                alt={post.title || "Listing"}
-                className="w-full h-40 object-cover rounded"
-              />
-            )}
+            <img
+              src={`${import.meta.env.VITE_API_BASE_URL}/${post.image?.replace(/\\/g, "/")}`}
+              alt={post.title}
+              className="w-full h-40 object-cover rounded"
+            />
             <h3 className="text-xl font-bold mt-2">{post.title}</h3>
             <p className="text-sm text-gray-600 mb-2">{post.location}</p>
 

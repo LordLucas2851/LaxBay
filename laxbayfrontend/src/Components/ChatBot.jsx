@@ -1,6 +1,9 @@
 import { useState } from "react";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
 async function GetResponse(message) {
-  const response = await fetch("http://localhost:3000/store/chat", {
+  const response = await fetch(`${API_BASE_URL}/store/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -11,7 +14,7 @@ async function GetResponse(message) {
 
   if (response.ok) {
     const data = await response.json();
-    return data.response; 
+    return data.response;
   } else {
     console.error("Error fetching AI response:", response.statusText);
     return "Sorry, I couldn't generate a response at the moment.";
@@ -19,8 +22,8 @@ async function GetResponse(message) {
 }
 
 export default function ChatBot() {
-  const [question, setQuestion] = useState("");  
-  const [response, setResponse] = useState("");  
+  const [question, setQuestion] = useState("");
+  const [response, setResponse] = useState("");
 
   function handleEnter(e) {
     if (e.code === "Enter") {
@@ -29,16 +32,16 @@ export default function ChatBot() {
   }
 
   async function callGPT() {
-    setResponse("");  
+    setResponse("");
     const ans = await GetResponse(question);
     setResponse(ans);
-    setQuestion(""); 
+    setQuestion("");
   }
 
   return (
     <div className="p-8 max-w-6xl mx-auto bg-white shadow-lg rounded-lg text-center">
       <h1 className="text-4xl font-bold mb-6">Chat with LaxBay</h1>
-      
+
       <div className="mb-6">
         <textarea
           value={response}
