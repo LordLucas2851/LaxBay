@@ -2,17 +2,16 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
-// Environment variable for backend base URL
-const API = import.meta.env.VITE_API_URL;
+// ✅ Correct environment variable
+const API = import.meta.env.VITE_API_BASE_URL;
 
-/**
- * Search page for browsing lacrosse listings.  This component wraps the
- * search and filter inputs in a card, uses a responsive grid for results
- * and featured posts, and maintains all existing functionality.  The
- * styling aims to evoke a modern e‑commerce experience similar to eBay
- * or SidelineSwap, with clean spacing, subtle shadows, and clear
- * typographic hierarchy.
- */
+// ✅ Helper to build proper image URLs
+const getImageUrl = (imagePath) => {
+  if (!imagePath) return "";
+  const normalized = imagePath.replace(/\\/g, "/");
+  return `https://laxbay.onrender.com/${normalized}`;
+};
+
 export default function SearchEngine() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -46,7 +45,6 @@ export default function SearchEngine() {
         const response = await axios.get(`${API}/store/search`, {
           params: { query: "", ...filters },
         });
-        // Randomise and slice to get a handful of featured posts
         setPreviewPosts(
           response.data.sort(() => 0.5 - Math.random()).slice(0, 6)
         );
@@ -67,7 +65,6 @@ export default function SearchEngine() {
     <div className="max-w-7xl mx-auto px-4 py-8">
       <h2 className="text-3xl font-bold text-gray-800 mb-6">Browse Gear</h2>
 
-      {/* Card containing search and filter inputs */}
       <div className="bg-white rounded-lg shadow-md p-6 mb-8">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <input
@@ -77,7 +74,6 @@ export default function SearchEngine() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-
           <input
             className="border border-gray-300 rounded-md px-4 py-2 w-full"
             type="text"
@@ -87,7 +83,6 @@ export default function SearchEngine() {
               setFilters({ ...filters, location: e.target.value })
             }
           />
-
           <input
             className="border border-gray-300 rounded-md px-4 py-2 w-full"
             type="number"
@@ -97,7 +92,6 @@ export default function SearchEngine() {
               setFilters({ ...filters, minPrice: e.target.value })
             }
           />
-
           <input
             className="border border-gray-300 rounded-md px-4 py-2 w-full"
             type="number"
@@ -107,7 +101,6 @@ export default function SearchEngine() {
               setFilters({ ...filters, maxPrice: e.target.value })
             }
           />
-
           <select
             className="border border-gray-300 rounded-md px-4 py-2 w-full"
             value={filters.category}
@@ -125,7 +118,6 @@ export default function SearchEngine() {
         </div>
       </div>
 
-      {/* Results grid */}
       {results.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
           {results.map((post) => (
@@ -135,14 +127,14 @@ export default function SearchEngine() {
               onClick={() => handlePostClick(post.id)}
             >
               <img
-                src={`${API}/${post.image.replace(/\\/g, "/")}`}
+                src={getImageUrl(post.image)}
                 alt={post.title}
                 className="w-full h-48 object-cover"
               />
               <div className="p-4">
                 <h3 className="text-xl font-bold mb-1">{post.title}</h3>
                 <p className="text-sm text-gray-600 mb-2">{post.description}</p>
-                <p className="font-semibold text-indigo-600 mb-1">\${post.price}</p>
+                <p className="font-semibold text-indigo-600 mb-1">${post.price}</p>
                 <p className="text-xs text-gray-500">
                   {post.username} • {post.location}
                 </p>
@@ -156,7 +148,6 @@ export default function SearchEngine() {
         <p>No results found.</p>
       )}
 
-      {/* Featured listings shown only when there are no search results */}
       {results.length === 0 && !isLoading && (
         <div>
           <h3 className="text-2xl font-semibold mb-4">Featured Listings</h3>
@@ -168,14 +159,14 @@ export default function SearchEngine() {
                 onClick={() => handlePostClick(post.id)}
               >
                 <img
-                  src={`${API}/${post.image.replace(/\\/g, "/")}`}
+                  src={getImageUrl(post.image)}
                   alt={post.title}
                   className="w-full h-48 object-cover"
                 />
                 <div className="p-4">
                   <h3 className="text-xl font-bold mb-1">{post.title}</h3>
                   <p className="text-sm text-gray-600 mb-2">{post.description}</p>
-                  <p className="font-semibold text-indigo-600 mb-1">\${post.price}</p>
+                  <p className="font-semibold text-indigo-600 mb-1">${post.price}</p>
                   <p className="text-xs text-gray-500">
                     {post.username} • {post.location}
                   </p>
