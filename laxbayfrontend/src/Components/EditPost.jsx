@@ -2,10 +2,10 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useNavigate, useParams } from "react-router-dom";
 
-// ✅ Correct env var: includes /api
+// ✅ Correct base (must be set in Vercel): https://laxbay.onrender.com/api
 const API = import.meta.env.VITE_API_BASE_URL;
 
-// Build correct image URLs: remove trailing /api so /uploads works
+// Build /uploads URL by stripping /api from base
 const getImageUrl = (imagePath) => {
   if (!imagePath) return "";
   const normalized = String(imagePath).replace(/\\/g, "/");
@@ -14,8 +14,8 @@ const getImageUrl = (imagePath) => {
   return `${origin}/${normalized.replace(/^\/+/, "")}`;
 };
 
-const EditPost = () => {
-  const { postId } = useParams();
+export default function EditPost() {
+  const { postId } = useParams();        // route should be /edit/:postId
   const navigate = useNavigate();
 
   const [title, setTitle] = useState("");
@@ -35,30 +35,21 @@ const EditPost = () => {
     let alive = true;
     (async () => {
       try {
-        // Try admin first; fall back to user route if 404
-        let res;
-        try {
-          res = await axios.get(`${API}/store/admin/posts/${postId}`, { withCredentials: true });
-        } catch (e) {
-          if (e?.response?.status === 404) {
-            res = await axios.get(`${API}/store/user/post/${postId}`, { withCredentials: true });
-          } else {
-            throw e;
-          }
-        }
+        // Load your own post details from user route
+        const res = await axios.get(`${API}/store/user/post/${postId}`, {
+          withCredentials: true
+        });
         if (!alive) return;
-
-        const data = res.data || {};
-        setTitle(data.title ?? data.name ?? "");
-        setDescription(data.description ?? "");
-        setPrice(String(data.price ?? ""));
-        setCategory(data.category ?? "");
-        setLocation(data.location ?? "");
-        setCurrentImage(data.image ?? "");
-        setImagePreview(null);
-      } catch (err) {
-        console.error("Error fetching post data:", err);
-        if (alive) setErrMsg(err?.response?.data?.error || "Failed to fetch post data.");
+        const p = res.data || {};
+        setTitle(p.title ?? p.name ?? "");
+        setDescription(p.description ?? "");
+        setPrice(String(p.price ?? ""));
+        setCategory(p.category ?? "");
+        setLocation(p.location ?? "");
+        setCurrentImage(p.image ?? "");
+      } catch (e) {
+        console.error("Error fetching post data:", e);
+        if (alive) setErrMsg(e?.response?.data?.error || "Failed to fetch post data.");
       } finally {
         if (alive) setLoading(false);
       }
@@ -67,8 +58,8 @@ const EditPost = () => {
   }, [postId]);
 
   const handleImageChange = (e) => {
-    const file = e.target.files?.[0];
-    setImage(file || null);
+    const file = e.target.files?.[0] || null;
+    setImage(file);
     setImagePreview(file ? URL.createObjectURL(file) : null);
   };
 
@@ -91,57 +82,27 @@ const EditPost = () => {
     if (Object.keys(formErrors).length > 0) return;
 
     setSaving(true);
-
     try {
-      // Try admin JSON update first
-      try {
-        await axios.put(
-          `${API}/store/admin/posts/${postId}`,
-          {
-            title,
-            description,
-            price: Number(price),
-            category,
-            location: location || sessionStorage.getItem("city") || "",
-          },
-          { withCredentials: true }
-        );
+      const fd = new FormData();
+      fd.append("title", title);
+      fd.append("description", description);
+      fd.append("price", price);
+      fd.append("category", category);
+      fd.append("location", location || sessionStorage.getItem("city") || "");
+      if (image) fd.append("image", image); // send file only if selected
 
-        // If new image chosen, upload it to the admin image endpoint
-        if (image) {
-          const fd = new FormData();
-          fd.append("image", image);
-          await axios.put(`${API}/store/admin/posts/${postId}/image`, fd, {
-            withCredentials: true,
-            headers: { "Content-Type": "multipart/form-data" },
-          });
-        }
-      } catch (err) {
-        // If admin routes don't exist, fall back to user multipart update
-        if (err?.response?.status === 404) {
-          const fd = new FormData();
-          fd.append("title", title);
-          fd.append("description", description);
-          fd.append("price", price);
-          fd.append("category", category);
-          fd.append("location", location || sessionStorage.getItem("city") || "");
-          if (image) fd.append("image", image);
-          else if (currentImage) fd.append("image", currentImage);
+      // ✅ User update endpoint (your backend already has this)
+      const res = await axios.put(`${API}/store/user/update/${postId}`, fd, {
+        withCredentials: true,
+        headers: { "Content-Type": "multipart/form-data" },
+      });
 
-          await axios.put(`${API}/store/user/update/${postId}`, fd, {
-            withCredentials: true,
-            headers: { "Content-Type": "multipart/form-data" },
-          });
-        } else {
-          throw err;
-        }
-      }
-
+      console.log("Update ok:", res.data);
       alert("Post updated successfully!");
       navigate(-1);
-    } catch (error) {
-      console.error("Error updating post:", error);
-      setErrMsg(error?.response?.data?.error || error?.message || "Failed to update post.");
+    } catch (e) {
+      console.error("Error updating post:", e);
+      setErrMsg(e?.response?.data?.error || e.message || "Failed to update post.");
     } finally {
       setSaving(false);
     }
@@ -160,74 +121,32 @@ const EditPost = () => {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <input
-          type="text"
-          name="title"
-          placeholder="Title"
-          className="w-full border p-2 rounded"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          required
-        />
+        <input className="w-full border p-2 rounded" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" />
         {errors.title && <span className="text-red-600">{errors.title}</span>}
 
-        <textarea
-          name="description"
-          placeholder="Description"
-          className="w-full border p-2 rounded"
-          rows="4"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          required
-        />
+        <textarea className="w-full border p-2 rounded" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" />
         {errors.description && <span className="text-red-600">{errors.description}</span>}
 
-        <input
-          type="number"
-          name="price"
-          placeholder="Price ($)"
-          className="w-full border p-2 rounded"
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          required
-        />
+        <input className="w-full border p-2 rounded" type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Price ($)" />
         {errors.price && <span className="text-red-600">{errors.price}</span>}
 
-        <input
-          type="text"
-          name="category"
-          placeholder="Category"
-          className="w-full border p-2 rounded"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          required
-        />
+        <input className="w-full border p-2 rounded" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Category" />
+        {errors.category && <span className="text-red-600">{errors.category}</span>}
 
-        <input
-          type="text"
-          name="location"
-          placeholder="Location"
-          className="w-full border p-2 rounded"
-          value={location}
-          onChange={(e) => setLocation(e.target.value)}
-        />
+        <input className="w-full border p-2 rounded" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Location" />
 
         <div>
-          <label className="block text-lg font-semibold mb-1">Current Image</label>
-          {currentImage && !imagePreview ? (
-            <img
-              src={getImageUrl(currentImage)}
-              alt="Current Post"
-              className="w-40 h-40 object-cover rounded border"
-            />
+          <label className="block text-sm font-medium mb-1">Current Image</label>
+          {currentImage ? (
+            <img src={getImageUrl(currentImage)} alt="Current" className="w-40 h-40 object-cover rounded border" />
           ) : (
             <div className="text-gray-500 text-sm">No image</div>
           )}
         </div>
 
         <div>
-          <label className="block text-lg font-semibold mb-1">Replace Image (optional)</label>
-          <input type="file" name="image" accept="image/*" className="w-full border p-2 rounded" onChange={handleImageChange} />
+          <label className="block text-sm font-medium mb-1">Replace Image (optional)</label>
+          <input type="file" accept="image/*" onChange={handleImageChange} />
           {imagePreview && <img src={imagePreview} alt="Preview" className="w-40 h-40 object-cover mt-2 rounded border" />}
         </div>
 
@@ -241,6 +160,4 @@ const EditPost = () => {
       </form>
     </div>
   );
-};
-
-export default EditPost;
+}
