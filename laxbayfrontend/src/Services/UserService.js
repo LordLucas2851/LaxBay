@@ -1,15 +1,10 @@
 import axios from "axios";
 
-// Use environment variable for API base URL
-const API = import.meta.env.VITE_API_URL;
+const API = import.meta.env.VITE_API_BASE_URL;
 
-/**
- * Register a new user.
- * This function posts user data to the backend using the configured API base URL.
- *
- * @param {Object} userData - The user data to send
- * @returns {Promise}
- */
-export const registerUser = (userData) => {
-  return axios.post(`${API}/store/register`, userData);
-};
+export async function registerUser(userData) {
+  return await axios.post(`${API}/store/register`, userData, {
+    headers: { "Content-Type": "application/json" },
+    withCredentials: true,
+  });
+}
