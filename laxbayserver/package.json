@@ -1,7 +1,7 @@
 {
   "name": "laxbayserver",
   "version": "1.0.0",
-  "type": "module",                      // ✅ Add this line
+  "type": "module",                      
   "main": "index.js",
   "scripts": {
     "start": "node api/index.js",
