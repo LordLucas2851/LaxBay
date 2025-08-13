@@ -1,71 +1,100 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 
+// ✅ Use the standardized env var
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-
-async function GetResponse(message) {
-  const response = await fetch(`${API_BASE_URL}/store/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ message }),
-    credentials: "include", 
-  });
-
-  if (response.ok) {
-    const data = await response.json();
-    return data.response;
-  } else {
-    console.error("Error fetching AI response:", response.statusText);
-    return "Sorry, I couldn't generate a response at the moment.";
-  }
-}
 
 export default function ChatBot() {
   const [question, setQuestion] = useState("");
   const [response, setResponse] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [errMsg, setErrMsg] = useState("");
+  const btnRef = useRef(null);
 
-  function handleEnter(e) {
-    if (e.code === "Enter") {
-      callGPT();
+  const callGPT = async () => {
+    const trimmed = question.trim();
+    if (!trimmed) {
+      setErrMsg("Please enter a question.");
+      return;
     }
-  }
-
-  async function callGPT() {
+    setErrMsg("");
+    setLoading(true);
     setResponse("");
-    const ans = await GetResponse(question);
-    setResponse(ans);
-    setQuestion("");
-  }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/store/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include", // keep sessions/cookies flowing
+        body: JSON.stringify({ message: trimmed }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Request failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      setResponse(data.response || "No response received.");
+      setQuestion("");
+    } catch (e) {
+      console.error("Chat error:", e);
+      setErrMsg(e.message || "Sorry, I couldn't generate a response.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Enter = submit, Shift+Enter = newline
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      btnRef.current?.click();
+    }
+  };
 
   return (
-    <div className="p-8 max-w-6xl mx-auto bg-white shadow-lg rounded-lg text-center">
-      <h1 className="text-4xl font-bold mb-6">Chat with LaxBay</h1>
+    <div className="p-8 max-w-4xl mx-auto">
+      <h1 className="text-3xl font-bold mb-6 text-center">Chat with LaxBay</h1>
 
-      <div className="mb-6">
+      {/* Response area */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-1">Assistant</label>
         <textarea
           value={response}
           readOnly
-          className="w-full h-40 p-4 text-lg border-2 border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600 overflow-y-auto resize-none"
+          className="w-full h-44 p-4 text-base border rounded-md bg-gray-50 focus:outline-none"
         />
       </div>
 
-      <div className="mb-6">
+      {/* Error */}
+      {errMsg && (
+        <div className="mb-4 text-red-600 text-sm border border-red-200 bg-red-50 rounded p-2">
+          {errMsg}
+        </div>
+      )}
+
+      {/* Prompt input */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium mb-1">Your question</label>
         <textarea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={handleEnter}
-          placeholder="Ask me anything!"
-          className="w-full h-20 p-4 text-lg border-2 border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600 resize-none"
+          onKeyDown={handleKeyDown}
+          placeholder="Ask me anything about listings, gear, or the site… (Shift+Enter for newline)"
+          className="w-full h-28 p-4 text-base border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
         />
       </div>
 
       <div className="flex justify-center">
         <button
+          ref={btnRef}
           onClick={callGPT}
-          className="bg-emerald-600 text-white text-lg py-2 px-6 rounded-lg shadow-md hover:bg-emerald-700 transition-all"
+          disabled={loading}
+          className={`px-6 py-2 rounded-lg text-white shadow ${
+            loading ? "bg-gray-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700"
+          }`}
         >
-          Submit
+          {loading ? "Thinking…" : "Submit"}
         </button>
       </div>
     </div>
