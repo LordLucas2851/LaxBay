@@ -4,28 +4,29 @@ import { info, careers, tone } from "./info.js";
 
 const chatBotRouter = express.Router();
 
-// Prefer GEMINI_API_KEY; fall back to API_KEY for compatibility
+// Prefer GEMINI_API_KEY; fall back to API_KEY
 const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY;
-if (!API_KEY) {
-  console.warn(
-    "[ChatBotRoute] No API key found. Set GEMINI_API_KEY (preferred) or API_KEY."
-  );
-}
-const genAI = API_KEY ? new GoogleGenerativeAI(API_KEY) : null;
 
-// ---------- Simple health check ----------
+let genAI = null;
+if (!API_KEY) {
+  console.warn("[ChatBotRoute] No API key set. Set GEMINI_API_KEY (preferred) or API_KEY.");
+} else {
+  genAI = new GoogleGenerativeAI(API_KEY);
+}
+
 chatBotRouter.get("/ping", (_req, res) => res.json({ ok: true }));
 
-// ---------- Non-streaming (kept for compatibility) ----------
+// --- Non-streaming fallback (keep this) ---
 chatBotRouter.post("/", async (req, res) => {
   try {
     if (!genAI) return res.status(500).json({ error: "AI not configured." });
+
     const message = (req.body?.message || "").trim();
     if (!message) return res.status(400).json({ error: "Message is required." });
 
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-pro-latest",
-      systemInstruction: [info, careers, tone].join("\n\n"),
+      systemInstruction: [info, careers, tone, "Be concise."].join("\n\n"),
     });
 
     const result = await model.generateContent({
@@ -33,45 +34,66 @@ chatBotRouter.post("/", async (req, res) => {
     });
 
     const text = result?.response?.text?.() || "";
-    res.json({ response: text || "I couldn't generate a response." });
+    return res.json({ response: text || "I couldn't generate a response." });
   } catch (err) {
-    console.error("AI generation error:", err);
-    res.status(500).json({ error: "An error occurred while generating AI response" });
+    console.error("[Chat non-stream] error:", err);
+    return res.status(500).json({ error: "An error occurred while generating AI response" });
   }
 });
 
-// ---------- Streaming endpoint ----------
+// --- Streaming (text/plain, chunked) ---
 chatBotRouter.post("/stream", async (req, res) => {
-  try {
-    if (!genAI) return res.status(500).end("AI not configured.");
-    const message = (req.body?.message || "").trim();
-    if (!message) return res.status(400).end("Message is required.");
+  // Guard rails & setup
+  if (!genAI) {
+    res.status(500);
+    return res.end("AI not configured.");
+  }
 
+  const message = (req.body?.message || "").trim();
+  if (!message) {
+    res.status(400);
+    return res.end("Message is required.");
+  }
+
+  try {
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-pro-latest",
       systemInstruction: [info, careers, tone, "Be concise."].join("\n\n"),
     });
 
-    // Important: use streaming API
     const result = await model.generateContentStream({
       contents: [{ role: "user", parts: [{ text: message }] }],
     });
 
-    // Chunked text stream (simple text/plain; client reads with fetch stream)
+    // Important: streaming-friendly headers
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
-    // For proxies (Render) to keep connection open
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("X-Accel-Buffering", "no"); // for some proxies
+    // Flush headers so clients start reading immediately
+    res.flushHeaders?.();
 
-    for await (const chunk of result.stream) {
-      const delta = chunk?.text?.() || "";
-      if (delta) res.write(delta);
+    // Some platforms close idle sockets; this helps in dev
+    req.socket?.setKeepAlive?.(true);
+    req.socket?.setTimeout?.(0);
+
+    try {
+      for await (const chunk of result.stream) {
+        // The SDK exposes a helper on each streamed chunk:
+        const delta = typeof chunk?.text === "function" ? chunk.text() : "";
+        if (delta) {
+          res.write(delta);
+        }
+      }
+    } catch (inner) {
+      console.error("[Chat stream] loop error:", inner);
+      try { res.write("\n\n[STREAM_ERROR]"); } catch {}
+    } finally {
+      res.end();
     }
-    res.end();
   } catch (err) {
-    console.error("AI streaming error:", err);
-    // Send what we can; client will show error if needed
-    try { res.write("\n\n[Error streaming response]"); } catch {}
+    console.error("[Chat stream] setup error:", err);
+    try { res.write("\n\n[STREAM_ERROR]"); } catch {}
     res.end();
   }
 });
