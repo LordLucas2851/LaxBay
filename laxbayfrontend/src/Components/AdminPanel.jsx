@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import apiClient from "./apiClient";  // adjust path if needed
+import apiClient from "../apiClient";  // adjust path if needed
 import { useNavigate } from "react-router-dom";
 
 export default function AdminPanel() {
