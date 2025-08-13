@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import apiClient from "../apiClient";  // adjust path if needed
 import { useNavigate } from "react-router-dom";
+import apiClient from "../apiClient";
 
 export default function AdminPanel() {
   const [listings, setListings] = useState([]);
@@ -9,13 +9,15 @@ export default function AdminPanel() {
   const [fetchError, setFetchError] = useState(null);
   const navigate = useNavigate();
 
-  // Use Render in prod, localhost during dev
-  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000/api";
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api";
 
-  const api = axios.create({
-    baseURL: API_BASE,
-    withCredentials: true, // IMPORTANT: send cookies to Render
-  });
+  const imageUrl = (raw) => {
+    if (!raw) return "";
+    const normalized = String(raw).replace(/\\/g, "/");
+    if (/^https?:\/\//i.test(normalized)) return normalized;
+    const apiOrigin = API_BASE.replace(/\/api\/?$/, "");
+    return `${apiOrigin}/${normalized.replace(/^\/+/, "")}`;
+  };
 
   useEffect(() => {
     let alive = true;
@@ -24,7 +26,7 @@ export default function AdminPanel() {
       setFetchError(null);
       try {
         const res = await apiClient.get("/store/admin/listings");
-        setListings(res.data);
+        if (alive) setListings(res.data);
       } catch (err) {
         console.error("Failed to fetch listings:", err);
         if (alive) setFetchError(err?.message || "Failed to fetch listings");
@@ -33,13 +35,13 @@ export default function AdminPanel() {
       }
     })();
     return () => { alive = false; };
-  }, []); // run once
+  }, []);
 
   const handleDelete = async (postId) => {
     if (!window.confirm("Are you sure you want to delete this post?")) return;
     try {
       await apiClient.delete(`/store/admin/posts/${postId}`);
-      setListings(listings.filter((post) => post.id !== postId));
+      setListings((prev) => prev.filter((post) => post.id !== postId));
     } catch (error) {
       console.error("Delete failed:", error);
       alert("Failed to delete post.");
@@ -48,15 +50,6 @@ export default function AdminPanel() {
 
   const toggleExpand = (postId) => {
     setExpandedPostId((id) => (id === postId ? null : postId));
-  };
-
-  // Build image URLs from paths the API returns
-  const imageUrl = (raw) => {
-    if (!raw) return "";
-    const normalized = String(raw).replace(/\\/g, "/");
-    if (/^https?:\/\//i.test(normalized)) return normalized;
-    const apiOrigin = API_BASE.replace(/\/api\/?$/, "");
-    return `${apiOrigin}/${normalized.replace(/^\/+/, "")}`;
   };
 
   const role = sessionStorage.getItem("role");
@@ -90,7 +83,7 @@ export default function AdminPanel() {
             className="border p-4 rounded shadow bg-white hover:shadow-lg transition-transform transform hover:scale-105 cursor-pointer"
           >
             <img
-              src={`${import.meta.env.VITE_API_BASE_URL}/${post.image?.replace(/\\/g, "/")}`}
+              src={imageUrl(post.image)}
               alt={post.title}
               className="w-full h-40 object-cover rounded"
             />
