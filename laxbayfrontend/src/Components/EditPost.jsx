@@ -2,10 +2,10 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useNavigate, useParams } from "react-router-dom";
 
-// ✅ Standardized backend base (includes /api)
+// ✅ Correct env var: includes /api
 const API = import.meta.env.VITE_API_BASE_URL;
 
-// Build correct image URLs: strip trailing /api and prepend origin
+// Build correct image URLs: remove trailing /api so /uploads works
 const getImageUrl = (imagePath) => {
   if (!imagePath) return "";
   const normalized = String(imagePath).replace(/\\/g, "/");
@@ -24,44 +24,31 @@ const EditPost = () => {
   const [category, setCategory] = useState("");
   const [location, setLocation] = useState("");
   const [currentImage, setCurrentImage] = useState("");
-  const [newImage, setNewImage] = useState(null);
+  const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [errors, setErrors] = useState({});
+  const [errMsg, setErrMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [errMsg, setErrMsg] = useState("");
-
-  // Prefer admin endpoints; fall back to user endpoints if 404
-  const GET_URLS = [
-    `${API}/store/admin/posts/${postId}`,
-    `${API}/store/user/post/${postId}`,
-  ];
-  const PUT_JSON_URL_ADMIN = `${API}/store/admin/posts/${postId}`;
-  const PUT_IMAGE_URL_ADMIN = `${API}/store/admin/posts/${postId}/image`;
-  const PUT_MULTIPART_URL_USER = `${API}/store/user/update/${postId}`;
 
   useEffect(() => {
     let alive = true;
-
     (async () => {
-      setLoading(true);
-      setErrMsg("");
       try {
-        let data = null;
-        for (const url of GET_URLS) {
-          try {
-            const res = await axios.get(url, { withCredentials: true });
-            data = res.data;
-            break;
-          } catch (e) {
-            if (e?.response?.status === 404) continue;
+        // Try admin first; fall back to user route if 404
+        let res;
+        try {
+          res = await axios.get(`${API}/store/admin/posts/${postId}`, { withCredentials: true });
+        } catch (e) {
+          if (e?.response?.status === 404) {
+            res = await axios.get(`${API}/store/user/post/${postId}`, { withCredentials: true });
+          } else {
             throw e;
           }
         }
-        if (!data) {
-          throw new Error("Post not found.");
-        }
+        if (!alive) return;
 
+        const data = res.data || {};
         setTitle(data.title ?? data.name ?? "");
         setDescription(data.description ?? "");
         setPrice(String(data.price ?? ""));
@@ -69,40 +56,29 @@ const EditPost = () => {
         setLocation(data.location ?? "");
         setCurrentImage(data.image ?? "");
         setImagePreview(null);
-      } catch (e) {
-        console.error("Error fetching post data:", e);
-        if (alive) setErrMsg(e?.message || "Failed to fetch post data.");
+      } catch (err) {
+        console.error("Error fetching post data:", err);
+        if (alive) setErrMsg(err?.response?.data?.error || "Failed to fetch post data.");
       } finally {
         if (alive) setLoading(false);
       }
     })();
-
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [postId]);
 
   const handleImageChange = (e) => {
     const file = e.target.files?.[0];
-    setNewImage(file || null);
+    setImage(file || null);
     setImagePreview(file ? URL.createObjectURL(file) : null);
   };
 
   const validateForm = () => {
     const errs = {};
-    if (title.trim().split(/\s+/).length < 3) {
-      errs.title = "Title must contain at least 3 words.";
-    }
-    if (description.trim().split(/\s+/).length < 20) {
-      errs.description = "Description must contain at least 20 words.";
-    }
+    if (title.trim().split(/\s+/).length < 3) errs.title = "Title must contain at least 3 words.";
+    if (description.trim().split(/\s+/).length < 20) errs.description = "Description must contain at least 20 words.";
     const p = Number(price);
-    if (!Number.isFinite(p) || p <= 0) {
-      errs.price = "Price must be a valid number greater than 0.";
-    }
-    if (!category) {
-      errs.category = "Category is required.";
-    }
+    if (!Number.isFinite(p) || p <= 0) errs.price = "Price must be a valid number greater than 0.";
+    if (!category) errs.category = "Category is required.";
     return errs;
   };
 
@@ -120,7 +96,7 @@ const EditPost = () => {
       // Try admin JSON update first
       try {
         await axios.put(
-          PUT_JSON_URL_ADMIN,
+          `${API}/store/admin/posts/${postId}`,
           {
             title,
             description,
@@ -131,17 +107,17 @@ const EditPost = () => {
           { withCredentials: true }
         );
 
-        // If a new image was selected, send it to admin image endpoint
-        if (newImage) {
+        // If new image chosen, upload it to the admin image endpoint
+        if (image) {
           const fd = new FormData();
-          fd.append("image", newImage);
-          await axios.put(PUT_IMAGE_URL_ADMIN, fd, {
+          fd.append("image", image);
+          await axios.put(`${API}/store/admin/posts/${postId}/image`, fd, {
             withCredentials: true,
             headers: { "Content-Type": "multipart/form-data" },
           });
         }
       } catch (err) {
-        // If admin route not found, fall back to user multipart endpoint
+        // If admin routes don't exist, fall back to user multipart update
         if (err?.response?.status === 404) {
           const fd = new FormData();
           fd.append("title", title);
@@ -149,12 +125,10 @@ const EditPost = () => {
           fd.append("price", price);
           fd.append("category", category);
           fd.append("location", location || sessionStorage.getItem("city") || "");
-          if (newImage) {
-            fd.append("image", newImage);
-          } else if (currentImage) {
-            fd.append("image", currentImage);
-          }
-          await axios.put(PUT_MULTIPART_URL_USER, fd, {
+          if (image) fd.append("image", image);
+          else if (currentImage) fd.append("image", currentImage);
+
+          await axios.put(`${API}/store/user/update/${postId}`, fd, {
             withCredentials: true,
             headers: { "Content-Type": "multipart/form-data" },
           });
@@ -228,7 +202,6 @@ const EditPost = () => {
           onChange={(e) => setCategory(e.target.value)}
           required
         />
-        {errors.category && <span className="text-red-600">{errors.category}</span>}
 
         <input
           type="text"
