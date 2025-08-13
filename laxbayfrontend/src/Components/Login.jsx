@@ -3,8 +3,8 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { DataContext } from "../App";
 
-// Use environment variable for API base URL
-const API = import.meta.env.VITE_API_URL;
+// ✅ Use the correct environment variable name
+const API = import.meta.env.VITE_API_BASE_URL;
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -21,19 +21,20 @@ export default function Login() {
     }
 
     try {
-      // POST to backend using API base URL and include credentials
-      const response = await axios.post(`${API}/store/login`, { email, password }, {
-        headers: { "Content-Type": "application/json" },
-        withCredentials: true,
-      });
+      const response = await axios.post(
+        `${API}/store/login`,
+        { email, password },
+        {
+          headers: { "Content-Type": "application/json" },
+          withCredentials: true,
+        }
+      );
 
-      // Save session info
       sessionStorage.setItem("logged", "true");
       sessionStorage.setItem("city", response.data.user.city);
       sessionStorage.setItem("role", response.data.user.role);
 
       setLogStatus(true);
-
       alert("Login successful!");
       navigate("/");
     } catch (error) {
