@@ -17,7 +17,8 @@ if (!API_KEY) {
 const SYSTEM_PROMPT = [info, careers, tone, "Be concise."].join("\n\n");
 
 // Build a model instance
-const getModel = (name) => genAI.getGenerativeModel({ model: name, systemInstruction: SYSTEM_PROMPT });
+const getModel = (name) =>
+  genAI.getGenerativeModel({ model: name, systemInstruction: SYSTEM_PROMPT });
 
 // Extract suggested retry seconds from Google error (RetryInfo.retryDelay like "36s")
 function parseRetrySeconds(err) {
@@ -36,8 +37,13 @@ chatBotRouter.post("/", async (req, res) => {
     const message = (req.body?.message || "").trim();
     if (!message) return res.status(400).json({ error: "Message is required." });
 
-    // Try cheaper model first, then pro
-    const tryModels = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
+    // ✅ Try cheaper/higher-quota models first, then pro
+    const tryModels = [
+      "gemini-1.5-flash-8b-latest",
+      "gemini-1.5-flash-latest",
+      "gemini-1.5-pro-latest",
+    ];
+
     for (let i = 0; i < tryModels.length; i++) {
       try {
         const model = getModel(tryModels[i]);
@@ -49,10 +55,9 @@ chatBotRouter.post("/", async (req, res) => {
       } catch (err) {
         if (err?.status === 429) {
           const delay = parseRetrySeconds(err) ?? 30;
-          return res.status(429).json({
-            error: "Rate limit reached. Please try again soon.",
-            retryAfter: delay,
-          });
+          return res
+            .status(429)
+            .json({ error: "Rate limit reached. Please try again soon.", retryAfter: delay });
         }
         if (i === tryModels.length - 1) throw err; // last model failed
       }
@@ -70,7 +75,7 @@ chatBotRouter.post("/stream", async (req, res) => {
   const message = (req.body?.message || "").trim();
   if (!message) return res.status(400).end("Message is required.");
 
-  // Send stream-friendly headers up front
+  // Stream-friendly headers
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.setHeader("Transfer-Encoding", "chunked");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -79,7 +84,12 @@ chatBotRouter.post("/stream", async (req, res) => {
   req.socket?.setKeepAlive?.(true);
   req.socket?.setTimeout?.(0);
 
-  const tryModels = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
+  // ✅ Try cheaper/higher-quota models first, then pro
+  const tryModels = [
+    "gemini-1.5-flash-8b-latest",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro-latest",
+  ];
 
   for (let i = 0; i < tryModels.length; i++) {
     try {
@@ -103,10 +113,12 @@ chatBotRouter.post("/stream", async (req, res) => {
       }
       if (i === tryModels.length - 1) {
         console.error("[Chat stream] error (final):", err);
-        try { res.write("\n\n[Error streaming response]"); } catch {}
+        try {
+          res.write("\n\n[Error streaming response]");
+        } catch {}
         return res.end();
       }
-      // else: continue to next model
+      // else: continue to next model in the chain
     }
   }
 });
