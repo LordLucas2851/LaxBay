@@ -2,49 +2,73 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
-// Use environment variable for API base URL
-const API = import.meta.env.VITE_API_URL;
+// ✅ Correct env var: includes /api
+const API = import.meta.env.VITE_API_BASE_URL;
+
+// Build proper image URLs (strip /api to hit /uploads)
+const getImageUrl = (imagePath) => {
+  if (!imagePath) return "";
+  const normalized = String(imagePath).replace(/\\/g, "/");
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  const origin = (API || "").replace(/\/api\/?$/, "");
+  return `${origin}/${normalized.replace(/^\/+/, "")}`;
+};
 
 function UserPostsPage() {
   const [posts, setPosts] = useState([]);
   const [expandedPostId, setExpandedPostId] = useState(null);
+  const [error, setError] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchUserPosts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchUserPosts = async () => {
+    setError("");
     try {
-      const response = await axios.get(`${API}/store/user`, {
-        withCredentials: true,
-      });
-      setPosts(response.data);
-    } catch (error) {
-      console.error("Error fetching user posts:", error);
+      const res = await axios.get(`${API}/store/user`, { withCredentials: true });
+      // Backend now returns 200 [] when no posts (see server fix below)
+      setPosts(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error("Error fetching user posts:", err);
+      // If unauthorized, nudge to login; otherwise show a friendly message
+      if (err?.response?.status === 401) {
+        setError("Please log in to view your posts.");
+      } else {
+        setError("Failed to load your posts. Please try again.");
+      }
+      setPosts([]);
     }
   };
 
   const handleDelete = async (postId) => {
+    if (!window.confirm("Delete this post?")) return;
     try {
-      await axios.delete(`${API}/store/user/${postId}`, {
-        withCredentials: true,
-      });
-      setPosts(posts.filter((post) => post.id !== postId));
-    } catch (error) {
-      console.error("Error deleting post:", error);
-      alert("Failed to delete post.");
+      await axios.delete(`${API}/store/user/${postId}`, { withCredentials: true });
+      setPosts((ps) => ps.filter((p) => p.id !== postId));
+    } catch (err) {
+      console.error("Error deleting post:", err);
+      alert(err?.response?.data?.error || "Failed to delete post.");
     }
   };
 
   const toggleExpand = (postId) => {
-    setExpandedPostId(expandedPostId === postId ? null : postId);
+    setExpandedPostId((id) => (id === postId ? null : postId));
   };
 
   return (
     <div className="max-w-6xl mx-auto p-6 bg-white shadow-lg rounded-lg">
       <h2 className="text-4xl font-bold text-center mb-6">My Posts</h2>
-      {posts.length === 0 ? (
+
+      {error && (
+        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3 text-center">
+          {error}
+        </div>
+      )}
+
+      {posts.length === 0 && !error ? (
         <p className="text-center">No posts found.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -54,53 +78,59 @@ function UserPostsPage() {
               onClick={() => toggleExpand(post.id)}
               className="border rounded-lg p-4 shadow-lg hover:shadow-xl transition-transform transform hover:scale-105 cursor-pointer"
             >
-              {/* Post Title */}
-              <h3 className="text-2xl font-semibold text-center mb-1">{post.title}</h3>
-              {/* Post Category */}
-              <p className="text-base text-gray-500 text-center mb-2">{post.category}</p>
-              {/* Post Image */}
+              <h3 className="text-2xl font-semibold text-center mb-1">
+                {post.title ?? post.name}
+              </h3>
+              <p className="text-base text-gray-500 text-center mb-2">
+                {post.category}
+              </p>
+
               {post.image && (
-                <div className="mb-4">
+                <div className="mb-4 flex justify-center">
                   <img
-                    src={`${API}/${post.image.replace(/\\/g, "/")}`}
-                    alt="Post Image"
-                    className="w-32 h-32 object-cover"
+                    src={getImageUrl(post.image)}
+                    alt="Post"
+                    className="w-32 h-32 object-cover rounded border"
                   />
                 </div>
               )}
-              {/* Expanded content */}
+
               {expandedPostId === post.id && (
                 <div className="text-center">
-                  {/* Description */}
                   <p className="text-lg text-gray-700 font-medium mb-4 px-2">
                     {post.description}
                   </p>
-                  {/* Price */}
                   <p className="text-base text-gray-800 mb-1">
-                    <strong className="text-gray-900">Price:</strong> <span className="font-semibold">${post.price}</span>
+                    <strong className="text-gray-900">Price:</strong>{" "}
+                    <span className="font-semibold">${post.price}</span>
                   </p>
-                  {/* Location */}
                   <p className="text-base text-gray-800 mb-2">
-                    <strong className="text-gray-900">Location:</strong> {post.location}
+                    <strong className="text-gray-900">Location:</strong>{" "}
+                    {post.location}
                   </p>
                 </div>
               )}
-              {/* Delete Button */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDelete(post.id);
-                }}
-                className="w-full bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition-colors mt-4"
-              >
-                Delete
-              </button>
-              <button
-                onClick={() => navigate(`/edit/${post.id}`)}
-                className="bg-blue-500 text-white px-2 py-1 rounded"
-              >
-                Edit
-              </button>
+
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(post.id);
+                  }}
+                  className="flex-1 bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition-colors"
+                >
+                  Delete
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/edit/${post.id}`);
+                  }}
+                  className="flex-1 bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors"
+                >
+                  Edit
+                </button>
+              </div>
             </div>
           ))}
         </div>
