@@ -1,6 +1,5 @@
 import { useState, useRef } from "react";
 
-// ✅ Standardized env var
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 export default function ChatBot() {
@@ -28,9 +27,24 @@ export default function ChatBot() {
         body: JSON.stringify({ message: prompt }),
       });
 
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(text || `Request failed (${res.status})`);
+      }
+
+      // Some platforms may buffer if response isn't explicitly a stream
+      if (!res.body) {
+        // Fall back to non-stream path
+        const fallback = await fetch(`${API_BASE_URL}/store/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ message: prompt }),
+        });
+        const data = await fallback.json();
+        setResponse(data.response || "No response.");
+        setQuestion("");
+        return;
       }
 
       const reader = res.body.getReader();
@@ -40,11 +54,9 @@ export default function ChatBot() {
         const { value, done } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
-        if (chunk) {
-          // Append streamed text
-          setResponse((prev) => prev + chunk);
-        }
+        if (chunk) setResponse((prev) => prev + chunk);
       }
+
       setQuestion("");
     } catch (e) {
       console.error("Chat stream error:", e);
@@ -54,7 +66,6 @@ export default function ChatBot() {
     }
   };
 
-  // Enter submits, Shift+Enter makes a newline
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -66,7 +77,6 @@ export default function ChatBot() {
     <div className="p-8 max-w-4xl mx-auto bg-white shadow-lg rounded-lg">
       <h1 className="text-3xl font-bold mb-6 text-center">Chat with LaxBay</h1>
 
-      {/* Response */}
       <div className="mb-4">
         <label className="block text-sm font-medium mb-1">Assistant</label>
         <textarea
@@ -76,14 +86,12 @@ export default function ChatBot() {
         />
       </div>
 
-      {/* Error */}
       {errMsg && (
         <div className="mb-4 text-red-600 text-sm border border-red-200 bg-red-50 rounded p-2">
           {errMsg}
         </div>
       )}
 
-      {/* Prompt */}
       <div className="mb-4">
         <label className="block text-sm font-medium mb-1">Your question</label>
         <textarea
