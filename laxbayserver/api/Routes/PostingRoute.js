@@ -1,6 +1,6 @@
 import express from "express";
 import multer from "multer";
-import { pool } from "../db/pool.js";
+import pool from "./PoolConnection.js";
 
 const router = express.Router();
 
