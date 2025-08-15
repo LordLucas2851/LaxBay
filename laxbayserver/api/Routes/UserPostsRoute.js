@@ -1,11 +1,21 @@
 import express from "express";
 import multer from "multer";
+import path from "path";
 import pool from "./PoolConnection.js";
+import { UPLOAD_DIR } from "../index.js";
 
 const router = express.Router();
-const upload = multer({ dest: "uploads/" });
 
-// Require login helper
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "");
+    const name = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, name);
+  },
+});
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
+
 const mustBeAuthed = (req, res) => {
   const username = req.session?.username;
   if (!username) {
@@ -15,16 +25,7 @@ const mustBeAuthed = (req, res) => {
   return username;
 };
 
-/**
- * Mounted at /api/store/user
- * Final paths:
- *   GET  /api/store/user/post/:id     (alias)
- *   GET  /api/store/user/posts/:id    (preferred)
- *   PUT  /api/store/user/update/:id   (alias)
- *   PUT  /api/store/user/posts/:id    (preferred)
- */
-
-// GET your own post
+// GET (owner-only)
 router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
@@ -43,7 +44,7 @@ router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   }
 });
 
-// UPDATE your own post
+// PUT (owner-only)
 router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
@@ -58,7 +59,7 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
     }
 
     const { title, description, price, category, location } = req.body;
-    const imagePath = req.file ? req.file.path : undefined;
+    const newImage = req.file ? `uploads/${req.file.filename}` : undefined;
 
     const { rows } = await pool.query(
       `UPDATE public.postings
@@ -71,7 +72,7 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
              updated_at = NOW()
        WHERE id = $7 AND username = $8
        RETURNING *`,
-      [title, description, price, category, location, imagePath, req.params.id, username]
+      [title, description, price, category, location, newImage, req.params.id, username]
     );
 
     res.json(rows[0]);
