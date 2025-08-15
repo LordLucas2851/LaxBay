@@ -24,41 +24,40 @@ import userRouter from "./Routes/UserRoute.js";
 import pool from "./Routes/PoolConnection.js";
 
 dotenv.config();
+
 const app = express();
 app.set("trust proxy", 1);
 
+// ---------- Local uploads dir (legacy compatibility) ----------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Local uploads folder (runtime on Render)
 const UPLOAD_DIR = path.join(__dirname, "../uploads");
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// ---------- Fallback GitHub base URLs ----------
-// First: your laxbayserver/uploads folder
-// Second: plain uploads folder if any
+// ---------- GitHub fallbacks for legacy /uploads/* ----------
 const RAW_BASES = [
   ...(process.env.GITHUB_UPLOADS_BASE
     ? process.env.GITHUB_UPLOADS_BASE.split(",").map(s => s.trim()).filter(Boolean)
     : []),
+  // Prioritize your repo layout: laxbayserver/uploads first
   "https://raw.githubusercontent.com/LordLucas2851/LaxBay/main/laxbayserver/uploads",
   "https://raw.githubusercontent.com/LordLucas2851/LaxBay/main/uploads",
 ];
 
-// Serve from local or GitHub fallback
+// Serve /uploads/* from disk -> GitHub -> 1x1 PNG (no broken icons)
 app.get("/uploads/:file", async (req, res) => {
   const fname = req.params.file;
+
+  // 1) Local disk
   const onDisk = path.join(UPLOAD_DIR, fname);
+  if (fs.existsSync(onDisk)) return res.sendFile(onDisk);
 
-  if (fs.existsSync(onDisk)) {
-    return res.sendFile(onDisk);
-  }
-
+  // 2) Try each GitHub raw base; log which URLs were attempted
+  const tried = [];
   for (const base of RAW_BASES) {
+    const url = `${base}/${encodeURIComponent(fname)}`;
+    tried.push(url);
     try {
-      const url = `${base}/${encodeURIComponent(fname)}`;
       const gh = await axios.get(url, {
         responseType: "arraybuffer",
         headers: { "User-Agent": "laxbay-server" },
@@ -71,12 +70,13 @@ app.get("/uploads/:file", async (req, res) => {
         "application/octet-stream";
       res.setHeader("Content-Type", mime);
       return res.status(200).send(Buffer.from(gh.data));
-    } catch (e) {
+    } catch {
       // try next base
     }
   }
 
-  console.warn("[uploads:fallback-miss]", fname);
+  console.warn("[uploads:fallback-miss]", fname, "tried:", tried);
+  // 3) Transparent 1x1 PNG placeholder so the UI doesn't show a broken image icon
   const png1x1 = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAk8B4O2b2ZcAAAAASUVORK5CYII=",
     "base64"
@@ -84,6 +84,9 @@ app.get("/uploads/:file", async (req, res) => {
   res.setHeader("Content-Type", "image/png");
   return res.status(200).send(png1x1);
 });
+
+// Also expose local uploads statically (covers dev/local or freshly written legacy files)
+app.use("/uploads", express.static(UPLOAD_DIR));
 
 // ---------- CORS ----------
 const allowedOrigins = [
@@ -102,11 +105,11 @@ app.use(
   })
 );
 
-// ---------- Body parsing ----------
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// ---------- Body parsing (bigger limits for base64 data URLs) ----------
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
-// ---------- Sessions ----------
+// ---------- Sessions (Postgres-backed) ----------
 const PgSession = connectPgSimple(session);
 app.use(
   session({
@@ -126,7 +129,7 @@ app.use(
   })
 );
 
-// ---------- Health checks ----------
+// ---------- Health ----------
 app.get("/healthz", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -136,6 +139,11 @@ app.get("/healthz", async (_req, res) => {
   }
 });
 app.get("/api/healthz", (_req, res) => res.status(200).json({ status: "ok" }));
+
+// Debug: see which GitHub bases are used
+app.get("/api/_debug/uploads-bases", (_req, res) => {
+  res.json({ bases: RAW_BASES });
+});
 
 // ---------- API routes ----------
 app.use("/api/store/register", registerRouter);
@@ -147,18 +155,14 @@ app.use("/api/store/search", searchRouter);
 app.use("/api/store", listingRouter);
 app.use("/api/user", userRouter);
 
-app.get("/api", (_req, res) => {
-  res.send("Hello from Express Server");
-});
+// Greeting
+app.get("/api", (_req, res) => res.send("Hello from Express Server"));
 
-// ---------- Debug helpers ----------
+// Debug DB
 app.get("/api/_debug/db-info", async (_req, res) => {
   try {
     const info = await pool.query(`
-      SELECT current_database() AS db,
-             current_user AS db_user,
-             current_schema() AS schema,
-             version() AS version
+      SELECT current_database() AS db, current_user AS db_user, current_schema() AS schema, version() AS version
     `);
     const tables = await pool.query(`
       SELECT table_schema, table_name
@@ -172,14 +176,13 @@ app.get("/api/_debug/db-info", async (_req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-
 app.get("/api/_debug/postings-sample", async (_req, res) => {
   try {
     const r = await pool.query(`
       SELECT id, username, title, created_at
       FROM postings
       ORDER BY id DESC
-      LIMIT 5;
+      LIMIT 5
     `);
     res.json(r.rows);
   } catch (e) {
@@ -187,7 +190,7 @@ app.get("/api/_debug/postings-sample", async (_req, res) => {
   }
 });
 
-// ---------- 404 logger ----------
+// ---------- 404 logger (keep last) ----------
 app.use((req, res) => {
   console.log(`[404] ${req.method} ${req.originalUrl}`);
   res.status(404).json({ error: "Not found" });
