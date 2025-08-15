@@ -8,6 +8,7 @@ const router = express.Router();
  * Final paths:
  *   GET /api/store/listings
  *   GET /api/store/listings/:id
+ *   GET /api/store/postdetails/:id  (alias for your frontend)
  */
 router.get("/listings", async (req, res) => {
   try {
@@ -28,18 +29,21 @@ router.get("/listings", async (req, res) => {
   }
 });
 
-router.get("/listings/:id", async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT * FROM public.postings WHERE id = $1`,
-      [req.params.id]
-    );
-    if (rows.length === 0) return res.status(404).json({ error: "Not found" });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error("Fetch posting error:", err);
-    res.status(500).json({ error: "Server error" });
+router.get(
+  ["/listings/:id", "/postdetails/:id", "/listing/:id"], // ← added /postdetails/:id
+  async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT * FROM public.postings WHERE id = $1`,
+        [req.params.id]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "Not found" });
+      res.json(rows[0]);
+    } catch (err) {
+      console.error("Fetch posting error:", err);
+      res.status(500).json({ error: "Server error" });
+    }
   }
-});
+);
 
 export default router;
