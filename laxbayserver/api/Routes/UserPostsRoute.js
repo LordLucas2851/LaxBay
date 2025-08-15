@@ -1,107 +1,73 @@
+// api/Routes/UserPostsRoute.js
 import express from "express";
+import pg from "pg";
 import multer from "multer";
-import path from "path";
-import pool from "./PoolConnection.js";
 
-const userPostRouter = express.Router();
+const router = express.Router();
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, "uploads/"),
-  filename: (_req, file, cb) =>
-    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`)
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
 });
 
-const upload = multer({ storage });
+// Multer for optional image upload
+const upload = multer({ dest: "uploads/" });
 
-// You also serve /uploads at app level; this is harmless but optional here
-userPostRouter.use("/uploads", express.static("uploads"));
-
-userPostRouter.get("/", async (req, res) => {
-  const username = req.session?.username;
-  if (!username) {
-    return res.status(401).json({ error: "Unauthorized. Please log in." });
-  }
-
+// GET a single post that belongs to the logged-in user
+router.get("/posts/:id", async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT * FROM postings WHERE username = $1 ORDER BY id DESC",
-      [username]
+    const username = req.session?.username;
+    if (!username) return res.status(401).json({ error: "Not authenticated" });
+
+    const { rows } = await pool.query(
+      "SELECT * FROM listings WHERE id = $1 AND username = $2",
+      [req.params.id, username]
     );
-    // ✅ Return 200 with [] when no posts
-    return res.status(200).json(result.rows);
-  } catch (error) {
-    console.error("Error fetching user posts:", error);
-    return res.status(500).json({ error: "Failed to fetch user posts" });
+    if (rows.length === 0) return res.status(404).json({ error: "Not found" });
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Fetch post error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-userPostRouter.get("/post/:id", async (req, res) => {
-  const { id } = req.params;
-
+// UPDATE a post (title/desc/price/category/location; image optional)
+router.put("/posts/:id", upload.single("image"), async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM postings WHERE id = $1", [id]);
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "Post not found" });
-    }
-    return res.status(200).json(result.rows[0]);
-  } catch (error) {
-    console.error("Error fetching post by ID:", error);
-    return res.status(500).json({ error: "Failed to fetch post" });
-  }
-});
+    const username = req.session?.username;
+    if (!username) return res.status(401).json({ error: "Not authenticated" });
 
-userPostRouter.put("/update/:id", upload.single("image"), async (req, res) => {
-  const { id } = req.params;
-  const { title, description, price, category, location } = req.body;
-  const username = req.session?.username; // ensure the editor owns it
-  const newImagePath = req.file ? `uploads/${req.file.filename}` : null;
-
-  if (!username) return res.status(401).json({ error: "Unauthorized" });
-
-  try {
-    const current = await pool.query(
-      "SELECT * FROM postings WHERE id = $1 AND username = $2",
-      [id, username]
+    const { rows: owned } = await pool.query(
+      "SELECT id FROM listings WHERE id = $1 AND username = $2",
+      [req.params.id, username]
     );
-    if (current.rows.length === 0) {
-      return res.status(404).json({ error: "Post not found" });
+    if (owned.length === 0) {
+      return res.status(403).json({ error: "Not your post or not found" });
     }
 
-    const imageToSave = newImagePath || current.rows[0].image;
+    const { title, description, price, category, location } = req.body;
+    const imagePath = req.file ? req.file.path : undefined;
 
-    const result = await pool.query(
-      `UPDATE postings 
-       SET title = $1, description = $2, price = $3, category = $4, location = $5, image = $6
-       WHERE id = $7 AND username = $8
+    const { rows } = await pool.query(
+      `UPDATE listings
+         SET title = COALESCE($1, title),
+             description = COALESCE($2, description),
+             price = COALESCE($3, price),
+             category = COALESCE($4, category),
+             location = COALESCE($5, location),
+             image = COALESCE($6, image),
+             updated_at = NOW()
+       WHERE id = $7
        RETURNING *`,
-      [title, description, price, category, location, imageToSave, id, username]
+      [title, description, price, category, location, imagePath, req.params.id]
     );
 
-    return res.json({ message: "Post updated", post: result.rows[0] });
+    res.json(rows[0]);
   } catch (err) {
-    console.error("Update error:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error("Update post error:", err);
+    res.status(500).json({ error: "Server error updating post" });
   }
 });
 
-userPostRouter.delete("/:id", async (req, res) => {
-  const { id } = req.params;
-  const username = req.session?.username;
-  if (!username) return res.status(401).json({ error: "Unauthorized" });
-
-  try {
-    const result = await pool.query(
-      "DELETE FROM postings WHERE id = $1 AND username = $2 RETURNING *",
-      [id, username]
-    );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Post not found" });
-    }
-    return res.status(200).json({ message: "Post deleted successfully." });
-  } catch (err) {
-    console.error("Error deleting post:", err);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-export default userPostRouter;
+export default router;
