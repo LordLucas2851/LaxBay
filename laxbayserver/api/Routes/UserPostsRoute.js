@@ -1,4 +1,3 @@
-// api/Routes/UserPostsRoute.js
 import express from "express";
 import pg from "pg";
 import multer from "multer";
@@ -10,14 +9,23 @@ const pool = new pg.Pool({
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
 });
 
-// Multer for optional image upload
 const upload = multer({ dest: "uploads/" });
 
-// GET a single post that belongs to the logged-in user
-router.get("/posts/:id", async (req, res) => {
+// Helper: check login
+const mustBeAuthed = (req, res) => {
+  const username = req.session?.username;
+  if (!username) {
+    res.status(401).json({ error: "Not authenticated" });
+    return null;
+  }
+  return username;
+};
+
+// GET post by ID (supports /post/:id and /posts/:id)
+router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   try {
-    const username = req.session?.username;
-    if (!username) return res.status(401).json({ error: "Not authenticated" });
+    const username = mustBeAuthed(req, res);
+    if (!username) return;
 
     const { rows } = await pool.query(
       "SELECT * FROM listings WHERE id = $1 AND username = $2",
@@ -32,11 +40,11 @@ router.get("/posts/:id", async (req, res) => {
   }
 });
 
-// UPDATE a post (title/desc/price/category/location; image optional)
-router.put("/posts/:id", upload.single("image"), async (req, res) => {
+// UPDATE post by ID (supports /update/:id and /posts/:id)
+router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, res) => {
   try {
-    const username = req.session?.username;
-    if (!username) return res.status(401).json({ error: "Not authenticated" });
+    const username = mustBeAuthed(req, res);
+    if (!username) return;
 
     const { rows: owned } = await pool.query(
       "SELECT id FROM listings WHERE id = $1 AND username = $2",
