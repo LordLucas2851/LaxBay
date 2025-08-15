@@ -1,8 +1,10 @@
+// api/index.js
 import express from "express";
 import cors from "cors";
 import session from "express-session";
 import dotenv from "dotenv";
 import connectPgSimple from "connect-pg-simple";
+import pg from "pg";
 
 import registerRouter from "./Routes/RegisterRoute.js";
 import loginRouter from "./Routes/LoginRoute.js";
@@ -60,7 +62,40 @@ app.use(
   })
 );
 
-// Routes
+// ---- Health check routes ----
+
+// Simple DB pool (optional DB check)
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
+});
+
+// Lightweight health check
+app.get("/healthz", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.status(200).json({
+      status: "ok",
+      db: "ok",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(200).json({
+      status: "degraded",
+      db: "error",
+      error: e.message,
+      uptime: process.uptime(),
+    });
+  }
+});
+
+// API-prefixed health check
+app.get("/api/healthz", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
+// ---- Main API routes ----
 app.use("/api/store/register", registerRouter);
 app.use("/api/store/login", loginRouter);
 app.use("/api/store/create", postingRouter);
@@ -71,11 +106,12 @@ app.use("/api/store/search", searchRouter);
 app.use("/api/store", listingRouter);
 app.use("/api/user", userRouter);
 
+// Healthcheck for humans
 app.get("/api", (req, res) => {
   res.send("Hello from Express Server");
 });
 
-// Debug: list routes
+// Debug route list
 app.get("/api/_debug/routes", (req, res) => {
   const routes = [];
   app._router.stack.forEach((m) => {
