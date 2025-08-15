@@ -1,28 +1,32 @@
 import express from "express";
 import multer from "multer";
-import path from "path";
-import { fileURLToPath } from "url";
 import pool from "./PoolConnection.js";
 
 const router = express.Router();
 
-// Resolve absolute uploads dir: .../laxbayserver/uploads
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const UPLOAD_DIR = path.join(__dirname, "../uploads");
-
-// Multer storage that preserves a file extension
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "");
-    const name = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    cb(null, name);
-  },
+// Use memory storage to avoid writing temp files
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB
 
-// Mounted at /api/store/create => POST /api/store/create/
+// Helper: turn multipart file buffer into data URL; or use provided imageData
+function extractImageData(req) {
+  // JSON base64 path
+  const data = req.body?.imageData || req.body?.image;
+  if (data && /^data:image\/(png|jpeg|jpg|webp);base64,/.test(String(data))) {
+    return String(data);
+  }
+  // Multipart file path
+  if (req.file?.buffer) {
+    const mime = req.file.mimetype || "image/png";
+    const b64 = req.file.buffer.toString("base64");
+    return `data:${mime};base64,${b64}`;
+  }
+  return null;
+}
+
+// Mounted at /api/store/create  => POST /api/store/create/
 router.post("/", upload.single("image"), async (req, res) => {
   try {
     const username = req.session?.username;
@@ -33,15 +37,14 @@ router.post("/", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "All fields must be provided" });
     }
 
-    // Store DB path like "uploads/<filename>"
-    const imagePath = req.file ? `uploads/${req.file.filename}` : null;
+    const imageValue = extractImageData(req); // may be null
 
     const { rows } = await pool.query(
       `INSERT INTO public.postings
          (username, title, description, price, category, location, image)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [username, title, description, price, category, location, imagePath]
+      [username, title, description, price, category, location, imageValue]
     );
 
     res.status(201).json({ message: "Post created successfully", post: rows[0] });
