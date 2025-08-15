@@ -1,3 +1,4 @@
+// api/Routes/UserPostsRoute.js
 import express from "express";
 import multer from "multer";
 import pool from "./PoolConnection.js";
@@ -28,7 +29,7 @@ function extractImageData(req) {
     const b64 = req.file.buffer.toString("base64");
     return `data:${mime};base64,${b64}`;
   }
-  return undefined; // don't change
+  return undefined; // no change
 }
 
 // GET /api/store/user/post(s)/:id
@@ -55,6 +56,7 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
     const username = mustBeAuthed(req, res);
     if (!username) return;
 
+    // Ensure ownership
     const { rows: owned } = await pool.query(
       `SELECT id FROM postings WHERE id = $1 AND username = $2`,
       [req.params.id, username]
@@ -71,8 +73,7 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
              price       = COALESCE($3, price),
              category    = COALESCE($4, category),
              location    = COALESCE($5, location),
-             image       = COALESCE($6, image),
-             updated_at  = NOW()
+             image       = COALESCE($6, image)
        WHERE id = $7 AND username = $8
        RETURNING *`,
       [title, description, price, category, location, imageValue, req.params.id, username]
