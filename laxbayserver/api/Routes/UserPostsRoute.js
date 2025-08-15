@@ -32,6 +32,28 @@ function extractImageData(req) {
   return undefined; // no change
 }
 
+/* ===================== NEW: list your own posts ===================== */
+// GET /api/store/user/posts   (returns [] if none)
+router.get(["/posts", "/my", "/mine"], async (req, res) => {
+  try {
+    const username = mustBeAuthed(req, res);
+    if (!username) return;
+
+    const { rows } = await pool.query(
+      `SELECT * FROM postings WHERE username = $1 ORDER BY id DESC`,
+      [username]
+    );
+
+    // Always 200 with an array (possibly empty)
+    res.json(rows);
+  } catch (err) {
+    console.error("Owner list error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+/* ===================== existing endpoints ===================== */
+
 // GET /api/store/user/post(s)/:id
 router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   try {
