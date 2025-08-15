@@ -5,15 +5,13 @@ import pool from "./PoolConnection.js";
 
 const router = express.Router();
 
-/* ---------- config ---------- */
-
+/* ===== Config ===== */
 const SITE_ORIGIN = process.env.SITE_ORIGIN || "https://lax-bay.vercel.app";
 const MAX_LISTINGS = Number(process.env.CHAT_MAX_LISTINGS || 12);
 const MAX_DESC_CHARS = Number(process.env.CHAT_DESC_CHARS || 160);
+const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-004";
 
-/* ---------- helpers ---------- */
-
-// Normalize request body. Accepts {prompt} or {message}, optional {messages, system}.
+/* ===== Small helpers ===== */
 function normBody(body = {}) {
   const prompt = (typeof body.prompt === "string" && body.prompt.trim())
     ? body.prompt.trim()
@@ -23,8 +21,46 @@ function normBody(body = {}) {
   return { prompt, messages, system };
 }
 
-// Split prompt into crude keywords for ILIKE search.
-function extractTerms(text) {
+function snip(s, n) {
+  if (!s) return "";
+  const one = String(s).replace(/\s+/g, " ").trim();
+  return one.length <= n ? one : one.slice(0, n - 1) + "…";
+}
+
+// Very simple filter extraction (good enough to start)
+function parseFilters(text = "") {
+  const t = String(text).toLowerCase();
+
+  // price range like: under 100, below 50, between 50 and 200, 50-200, over 300
+  let minPrice = null, maxPrice = null;
+  const between = t.match(/\bbetween\s+(\d+)\s+(?:and|-)\s+(\d+)\b/);
+  if (between) { minPrice = Number(between[1]); maxPrice = Number(between[2]); }
+  const range = t.match(/\b(\d+)\s*-\s*(\d+)\b/);
+  if (!between && range) { minPrice = Number(range[1]); maxPrice = Number(range[2]); }
+  const under = t.match(/\b(under|below|less than)\s+(\d+)\b/);
+  if (!between && !range && under) { maxPrice = Number(under[2]); }
+  const over = t.match(/\b(over|above|more than)\s+(\d+)\b/);
+  if (!between && over) { minPrice = Number(over[2]); }
+
+  // crude location: "in <word(s)>" (up to comma/period)
+  let location = null;
+  const loc = t.match(/\bin\s+([a-z\s]+?)(?:[.,;]|$)/);
+  if (loc) location = loc[1].trim();
+
+  // category: look for common nouns after "category" or "type"
+  let category = null;
+  const cat = t.match(/\b(category|type)\s+(?:is\s+)?([a-z\s]+)/);
+  if (cat) category = cat[2].trim();
+
+  return {
+    minPrice: isFinite(minPrice) ? minPrice : null,
+    maxPrice: isFinite(maxPrice) ? maxPrice : null,
+    location,
+    category
+  };
+}
+
+function termsForKeyword(text) {
   const stop = new Set(["the","a","an","and","or","of","for","to","is","are","in","on","with","my","your","our","their","at","by","from","about","what","how","do","i","you"]);
   return (text || "")
     .toLowerCase()
@@ -34,66 +70,6 @@ function extractTerms(text) {
     .slice(0, 6);
 }
 
-// Truncate a string to N chars (clean, single line).
-function snip(s, n) {
-  if (!s) return "";
-  const one = String(s).replace(/\s+/g, " ").trim();
-  return one.length <= n ? one : one.slice(0, n - 1) + "…";
-}
-
-// Query your "postings" table for relevant rows.
-async function fetchRelevantListings(prompt) {
-  const terms = extractTerms(prompt);
-  if (terms.length === 0) {
-    // No obvious keywords → show latest
-    const { rows } = await pool.query(
-      `SELECT id, title, description, price, category, location
-         FROM postings
-        ORDER BY id DESC
-        LIMIT $1`,
-      [MAX_LISTINGS]
-    );
-    return rows;
-  }
-
-  // Build ILIKE conditions: (title ILIKE %term% OR description ILIKE %term%)
-  const wheres = [];
-  const params = [];
-  let idx = 1;
-
-  for (const t of terms) {
-    const like = `%${t}%`;
-    wheres.push(`(title ILIKE $${idx} OR description ILIKE $${idx})`);
-    params.push(like);
-    idx++;
-  }
-  params.push(MAX_LISTINGS);
-
-  const { rows } = await pool.query(
-    `SELECT id, title, description, price, category, location
-       FROM postings
-      WHERE ${wheres.join(" AND ")}
-      ORDER BY id DESC
-      LIMIT $${idx}`,
-    params
-  );
-
-  // If nothing matched, fall back to latest N
-  if (rows.length === 0) {
-    const latest = await pool.query(
-      `SELECT id, title, description, price, category, location
-         FROM postings
-        ORDER BY id DESC
-        LIMIT $1`,
-      [MAX_LISTINGS]
-    );
-    return latest.rows;
-  }
-
-  return rows;
-}
-
-// Build the inventory context block shown to the model.
 function listingsToContext(rows = []) {
   if (!rows.length) return "No matching listings found right now.";
   const lines = rows.map(r => {
@@ -107,20 +83,17 @@ function listingsToContext(rows = []) {
   return lines.join("\n");
 }
 
-// Assemble the final prompt for the model.
 function buildPrompt({ messages = [], prompt = "", system = "" }, listingsContext = "") {
   const lines = [];
   const sysDefault =
     "You are LaxBay's helpful assistant. Be concise, friendly, and accurate. " +
-    "If the user asks about items for sale, prefer recommending from the Listings Context. " +
-    "When referencing an item, include its id and the URL if helpful.";
+    "When asked about available items, prefer recommending from the Listings Context by id/title and include the URL if helpful. " +
+    "If asked for something not available, say so and suggest closest matches.";
 
   lines.push(`System: ${system || sysDefault}`);
-
   if (listingsContext) {
-    lines.push("\nListings Context (latest &/or relevant):\n" + listingsContext + "\n");
+    lines.push("\nListings Context (relevant & latest):\n" + listingsContext + "\n");
   }
-
   if (Array.isArray(messages)) {
     for (const m of messages) {
       const role = (m?.role || "user").trim();
@@ -133,7 +106,7 @@ function buildPrompt({ messages = [], prompt = "", system = "" }, listingsContex
   return lines.join("\n");
 }
 
-function getModel() {
+function getTextModel() {
   const key = process.env.GOOGLE_API_KEY;
   if (!key) throw new Error("Missing GOOGLE_API_KEY env var");
   const modelName = process.env.GEMINI_MODEL || "gemini-1.5-flash";
@@ -141,36 +114,200 @@ function getModel() {
   return genAI.getGenerativeModel({ model: modelName });
 }
 
-/* ---------- routes ---------- */
+async function embedText(s) {
+  const key = process.env.GOOGLE_API_KEY;
+  if (!key) throw new Error("Missing GOOGLE_API_KEY env var");
+  const genAI = new GoogleGenerativeAI(key);
+  const model = genAI.getGenerativeModel({ model: EMBED_MODEL });
+  const result = await model.embedContent(s);
+  const vec = result?.embedding?.values;
+  if (!vec || !Array.isArray(vec)) throw new Error("Embedding failed");
+  return vec;
+}
+
+/* ===== Embedding maintenance ===== */
+
+// Build text to embed from a posting row
+function postingToEmbedDoc(p) {
+  return [
+    p.title || "",
+    p.category ? `Category: ${p.category}` : "",
+    p.location ? `Location: ${p.location}` : "",
+    p.description || ""
+  ].filter(Boolean).join("\n");
+}
+
+// Reindex embeddings for specific posting ids (array)
+async function reindexForIds(ids = []) {
+  if (!ids.length) return 0;
+  const { rows } = await pool.query(
+    `SELECT id, title, description, category, location
+       FROM postings
+      WHERE id = ANY($1::bigint[])`,
+    [ids]
+  );
+  let count = 0;
+  for (const p of rows) {
+    const doc = postingToEmbedDoc(p);
+    const vec = await embedText(doc);
+    await pool.query(
+      `INSERT INTO posting_embeddings (posting_id, embedding, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (posting_id) DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = NOW()`,
+      [p.id, vec]
+    );
+    count++;
+  }
+  return count;
+}
+
+// Reindex embeddings for all postings (up to a cap)
+async function reindexAll(limit = 2000) {
+  const { rows } = await pool.query(
+    `SELECT id, title, description, category, location
+       FROM postings
+      ORDER BY id DESC
+      LIMIT $1`,
+    [limit]
+  );
+  let count = 0;
+  for (const p of rows) {
+    const doc = postingToEmbedDoc(p);
+    const vec = await embedText(doc);
+    await pool.query(
+      `INSERT INTO posting_embeddings (posting_id, embedding, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (posting_id) DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = NOW()`,
+      [p.id, vec]
+    );
+    count++;
+  }
+  return count;
+}
+
+/* ===== Retrieval ===== */
+
+function filtersToWhere(filters) {
+  const parts = [];
+  const params = [];
+  let i = 1;
+
+  if (filters.minPrice != null) { parts.push(`price >= $${i++}`); params.push(filters.minPrice); }
+  if (filters.maxPrice != null) { parts.push(`price <= $${i++}`); params.push(filters.maxPrice); }
+  if (filters.location) { parts.push(`LOWER(location) LIKE LOWER($${i++})`); params.push(`%${filters.location}%`); }
+  if (filters.category) { parts.push(`LOWER(category) LIKE LOWER($${i++})`); params.push(`%${filters.category}%`); }
+
+  return { where: parts.length ? `WHERE ${parts.join(" AND ")}` : "", params };
+}
+
+// Keyword + filters (ILIKE)
+async function keywordListings(prompt, filters) {
+  const terms = termsForKeyword(prompt);
+  const { where, params } = filtersToWhere(filters);
+  let sql = `SELECT id, title, description, price, category, location
+               FROM postings`;
+  const likeClauses = [];
+
+  let i = params.length + 1;
+  for (const t of terms) {
+    likeClauses.push(`(title ILIKE $${i} OR description ILIKE $${i})`);
+    params.push(`%${t}%`);
+    i++;
+  }
+  const filterAndLike =
+    (where ? where + (likeClauses.length ? " AND " : "") : (likeClauses.length ? "WHERE " : "")) +
+    likeClauses.join(" AND ");
+
+  sql += ` ${filterAndLike} ORDER BY id DESC LIMIT $${i}`;
+  params.push(MAX_LISTINGS);
+  const { rows } = await pool.query(sql, params);
+  return rows;
+}
+
+// Vector similarity + filters
+async function vectorListings(prompt, filters) {
+  let vec;
+  try {
+    vec = await embedText(prompt);
+  } catch (e) {
+    // embedding not available -> return []
+    return [];
+  }
+
+  // Build filters on postings
+  const { where, params } = filtersToWhere(filters);
+
+  // Join with posting_embeddings using cosine distance
+  const sql = `
+    SELECT p.id, p.title, p.description, p.price, p.category, p.location,
+           1 - (pe.embedding <=> $1) AS similarity
+      FROM posting_embeddings pe
+      JOIN postings p ON p.id = pe.posting_id
+      ${where}
+     ORDER BY pe.embedding <=> $1 ASC
+     LIMIT $2
+  `;
+  const args = [vec, MAX_LISTINGS, ...params]; // params are only used in WHERE; order matters
+  const { rows } = await pool.query(sql, args);
+  return rows;
+}
+
+// Merge, score, de-dupe
+function mergeResults(keywordRows = [], vectorRows = []) {
+  const map = new Map();
+  for (const r of keywordRows) {
+    map.set(r.id, { ...r, score: 0.5 }); // base score
+  }
+  for (const r of vectorRows) {
+    const prev = map.get(r.id);
+    const vs = typeof r.similarity === "number" ? r.similarity : 0.0;
+    if (prev) {
+      // combine
+      prev.score = Math.max(prev.score, 0.5 + vs * 0.5);
+      map.set(r.id, prev);
+    } else {
+      map.set(r.id, { ...r, score: 0.5 + vs * 0.5 });
+    }
+  }
+  return Array.from(map.values())
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
+    .slice(0, MAX_LISTINGS);
+}
+
+/* ===== Routes ===== */
 
 // Health
 router.get("/", (_req, res) => {
   res.json({ ok: true, model: process.env.GEMINI_MODEL || "gemini-1.5-flash" });
 });
 
-// Non-streaming: POST /api/store/chat
+// Non-stream
 router.post("/", async (req, res) => {
   try {
     const body = normBody(req.body);
-    const rows = await fetchRelevantListings(body.prompt);
+    const filters = parseFilters(body.prompt);
+
+    const [kw, vec] = await Promise.all([
+      keywordListings(body.prompt, filters),
+      vectorListings(body.prompt, filters),
+    ]);
+    const rows = mergeResults(kw, vec);
     const context = listingsToContext(rows);
     const text = buildPrompt(body, context);
 
-    const model = getModel();
+    const model = getTextModel();
     const result = await model.generateContent(text);
     const out = result?.response?.text?.() || "";
 
-    res.json({ text: out, usedListings: rows.map(r => r.id) });
+    res.json({ text: out, usedListings: rows.map(r => r.id), filters });
   } catch (err) {
     console.error("chat error:", err);
-    const status = String(err?.message || "").includes("GOOGLE_API_KEY") ? 500 : 500;
-    res.status(status).json({ error: "chat error", detail: err.message });
+    res.status(500).json({ error: "chat error", detail: err.message });
   }
 });
 
-// Streaming SSE: POST /api/store/chat/stream
+// Streaming SSE (single payload then done)
 router.post("/stream", async (req, res) => {
-  // SSE headers
   res.set({
     "Cache-Control": "no-cache, no-transform",
     "Content-Type": "text/event-stream",
@@ -180,22 +317,50 @@ router.post("/stream", async (req, res) => {
 
   try {
     const body = normBody(req.body);
-    const rows = await fetchRelevantListings(body.prompt);
+    const filters = parseFilters(body.prompt);
+
+    const [kw, vec] = await Promise.all([
+      keywordListings(body.prompt, filters),
+      vectorListings(body.prompt, filters),
+    ]);
+    const rows = mergeResults(kw, vec);
     const context = listingsToContext(rows);
     const text = buildPrompt(body, context);
 
-    const model = getModel();
+    const model = getTextModel();
     const result = await model.generateContent(text);
     const out = result?.response?.text?.() || "";
 
-    // Send one payload containing the answer + which listing ids were considered.
-    res.write(`data: ${JSON.stringify({ text: out, usedListings: rows.map(r => r.id) })}\n\n`);
+    res.write(`data: ${JSON.stringify({ text: out, usedListings: rows.map(r => r.id), filters })}\n\n`);
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
   } catch (err) {
     console.error("chat stream error:", err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
     res.end();
+  }
+});
+
+/* ===== Admin utilities ===== */
+
+// Reindex all postings (up to limit)
+router.post("/admin/reindex-all", async (_req, res) => {
+  try {
+    const count = await reindexAll(2000);
+    res.json({ ok: true, reindexed: count });
+  } catch (e) {
+    res.status(500).json({ error: "reindex failed", detail: e.message });
+  }
+});
+
+// Reindex specific ids: { ids: [1,2,3] }
+router.post("/admin/reindex", async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Boolean) : [];
+    const count = await reindexForIds(ids);
+    res.json({ ok: true, reindexed: count });
+  } catch (e) {
+    res.status(500).json({ error: "reindex failed", detail: e.message });
   }
 });
 
