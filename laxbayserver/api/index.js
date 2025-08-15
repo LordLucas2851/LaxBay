@@ -4,6 +4,9 @@ import cors from "cors";
 import session from "express-session";
 import dotenv from "dotenv";
 import connectPgSimple from "connect-pg-simple";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 
 // Routers
 import registerRouter from "./Routes/RegisterRoute.js";
@@ -16,7 +19,7 @@ import searchRouter from "./Routes/SearchRoute.js";
 import listingRouter from "./Routes/ListingRoute.js";
 import userRouter from "./Routes/UserRoute.js";
 
-// DB pool (single source of truth)
+// Single DB pool (your existing one)
 import pool from "./Routes/PoolConnection.js";
 
 dotenv.config();
@@ -24,13 +27,29 @@ dotenv.config();
 const app = express();
 app.set("trust proxy", 1);
 
-// CORS
+// ---------- Static /uploads (absolute path) ----------
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// uploads directory is ../uploads relative to this file
+const UPLOAD_DIR = path.join(__dirname, "../uploads");
+
+// make sure the folder exists
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+// serve files at https://<host>/uploads/<filename>
+app.use("/uploads", express.static(UPLOAD_DIR));
+
+// ---------- CORS ----------
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5174",
   "http://localhost:5175",
   "https://lax-bay.vercel.app",
 ];
+
 app.use(
   cors({
     origin(origin, cb) {
@@ -41,12 +60,11 @@ app.use(
   })
 );
 
-// Body + static
+// ---------- Body parsing ----------
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use("/uploads", express.static("uploads"));
 
-// Sessions (Postgres-backed)
+// ---------- Sessions (Postgres-backed) ----------
 const PgSession = connectPgSimple(session);
 app.use(
   session({
@@ -75,22 +93,25 @@ app.get("/healthz", async (_req, res) => {
     res.status(200).json({ status: "degraded", db: "error", error: e.message });
   }
 });
+
 app.get("/api/healthz", (_req, res) => res.status(200).json({ status: "ok" }));
 
-// ---------- Main API routes (mounts) ----------
+// ---------- Main API routes ----------
 app.use("/api/store/register", registerRouter);
 app.use("/api/store/login", loginRouter);
 app.use("/api/store/create", postingRouter);   // POST /api/store/create/
 app.use("/api/store/user", userPostRouter);    // GET/PUT /api/store/user/posts/:id
 app.use("/api/store/admin", adminRouter);      // GET/DELETE /api/store/admin/listings(/:id)
 app.use("/api/store/search", searchRouter);    // GET /api/store/search
-app.use("/api/store", listingRouter);          // GET /api/store/listings(/:id)
+app.use("/api/store", listingRouter);          // GET /api/store/listings(/:id, postdetails/:id)
 app.use("/api/user", userRouter);
 
-// Greeting
-app.get("/api", (_req, res) => res.send("Hello from Express Server"));
+// Simple greeting
+app.get("/api", (_req, res) => {
+  res.send("Hello from Express Server");
+});
 
-// Debug routes
+// ---------- Debug helpers ----------
 app.get("/api/_debug/db-info", async (_req, res) => {
   try {
     const info = await pool.query(`
@@ -126,7 +147,7 @@ app.get("/api/_debug/postings-sample", async (_req, res) => {
   }
 });
 
-// 404 logger (keep last)
+// ---------- 404 logger (keep last) ----------
 app.use((req, res) => {
   console.log(`[404] ${req.method} ${req.originalUrl}`);
   res.status(404).json({ error: "Not found" });
