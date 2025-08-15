@@ -1,6 +1,7 @@
+// frontend/src/Components/ChatBot.jsx
 import { useState, useRef } from "react";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 
 export default function ChatBot() {
   const [question, setQuestion] = useState("");
@@ -24,7 +25,7 @@ export default function ChatBot() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ message: prompt }),
+        body: JSON.stringify({ prompt }), // ✅ send "prompt", not "message"
       });
 
       if (!res.ok) {
@@ -32,29 +33,54 @@ export default function ChatBot() {
         throw new Error(text || `Request failed (${res.status})`);
       }
 
-      // Some platforms may buffer if response isn't explicitly a stream
       if (!res.body) {
-        // Fall back to non-stream path
+        // Fallback to non-stream endpoint
         const fallback = await fetch(`${API_BASE_URL}/store/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ message: prompt }),
+          body: JSON.stringify({ prompt }), // ✅ same body
         });
         const data = await fallback.json();
-        setResponse(data.response || "No response.");
+        setResponse(data?.text || "No response.");
         setQuestion("");
         return;
       }
 
+      // Parse SSE: each event is "data: {...}\n\n"
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = "";
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        if (chunk) setResponse((prev) => prev + chunk);
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete events
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const evt = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 2);
+
+          if (!evt.startsWith("data:")) continue;
+          const jsonStr = evt.slice(5).trim(); // after "data:"
+          try {
+            const payload = JSON.parse(jsonStr);
+            if (payload.error) {
+              setErrMsg(payload.error);
+              continue;
+            }
+            if (typeof payload.text === "string") {
+              setResponse((prev) => prev + payload.text);
+            }
+            if (payload.done) {
+              // stream complete
+            }
+          } catch {
+            // ignore malformed chunks
+          }
+        }
       }
 
       setQuestion("");
