@@ -1,14 +1,17 @@
 // frontend/src/Components/ChatBot.jsx
 import { useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 
 export default function ChatBot() {
   const [question, setQuestion] = useState("");
   const [response, setResponse] = useState("");
+  const [suggestions, setSuggestions] = useState([]); // [{id,title,price,location,url}]
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg] = useState("");
   const btnRef = useRef(null);
+  const navigate = useNavigate();
 
   const callGPTStream = async () => {
     const prompt = question.trim();
@@ -18,6 +21,7 @@ export default function ChatBot() {
     }
     setErrMsg("");
     setResponse("");
+    setSuggestions([]);
     setLoading(true);
 
     try {
@@ -25,7 +29,7 @@ export default function ChatBot() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ prompt }), // ✅ send "prompt", not "message"
+        body: JSON.stringify({ prompt }),
       });
 
       if (!res.ok) {
@@ -34,20 +38,20 @@ export default function ChatBot() {
       }
 
       if (!res.body) {
-        // Fallback to non-stream endpoint
+        // Fallback to non-stream
         const fallback = await fetch(`${API_BASE_URL}/store/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ prompt }), // ✅ same body
+          body: JSON.stringify({ prompt }),
         });
         const data = await fallback.json();
         setResponse(data?.text || "No response.");
+        setSuggestions(Array.isArray(data?.usedItems) ? data.usedItems : []);
         setQuestion("");
         return;
       }
 
-      // Parse SSE: each event is "data: {...}\n\n"
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -57,14 +61,13 @@ export default function ChatBot() {
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        // Process complete events
         let idx;
         while ((idx = buffer.indexOf("\n\n")) !== -1) {
           const evt = buffer.slice(0, idx).trim();
           buffer = buffer.slice(idx + 2);
-
           if (!evt.startsWith("data:")) continue;
-          const jsonStr = evt.slice(5).trim(); // after "data:"
+
+          const jsonStr = evt.slice(5).trim();
           try {
             const payload = JSON.parse(jsonStr);
             if (payload.error) {
@@ -74,11 +77,11 @@ export default function ChatBot() {
             if (typeof payload.text === "string") {
               setResponse((prev) => prev + payload.text);
             }
-            if (payload.done) {
-              // stream complete
+            if (Array.isArray(payload.usedItems)) {
+              setSuggestions(payload.usedItems);
             }
           } catch {
-            // ignore malformed chunks
+            // ignore parse errors
           }
         }
       }
@@ -129,7 +132,7 @@ export default function ChatBot() {
         />
       </div>
 
-      <div className="flex justify-center">
+      <div className="flex justify-center mb-6">
         <button
           ref={btnRef}
           onClick={callGPTStream}
@@ -141,6 +144,29 @@ export default function ChatBot() {
           {loading ? "Thinking…" : "Submit"}
         </button>
       </div>
+
+      {/* Suggested items (buttons) */}
+      {suggestions.length > 0 && (
+        <div className="mt-6 border-t pt-4">
+          <h3 className="text-lg font-semibold mb-3">Related listings</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {suggestions.map((it) => (
+              <button
+                key={it.id}
+                onClick={() => navigate(`/postdetals/${it.id}`)}
+                className="w-full text-left p-3 rounded border hover:shadow bg-white"
+                title={it.title}
+              >
+                <div className="font-medium line-clamp-1">{it.title || `Item #${it.id}`}</div>
+                <div className="text-sm text-gray-600">
+                  {it.location ? `${it.location} • ` : ""}
+                  {it.price != null && it.price !== "" ? `$${it.price}` : ""}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
