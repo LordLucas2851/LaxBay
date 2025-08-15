@@ -1,9 +1,9 @@
 import express from "express";
-import { pool } from "../db/pool.js";
+import pool from "./PoolConnection.js";
 
 const router = express.Router();
 
-// TODO: real admin auth later
+// TODO: implement real admin auth
 const requireAdmin = (req, res, next) => next();
 
 /**
