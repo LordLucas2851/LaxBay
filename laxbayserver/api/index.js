@@ -20,6 +20,7 @@ dotenv.config();
 
 const app = express();
 
+// Behind Render/Proxy so cookies marked secure can be set correctly
 app.set("trust proxy", 1);
 
 const allowedOrigins = [
@@ -45,6 +46,8 @@ app.use("/uploads", express.static("uploads"));
 
 const PgSession = connectPgSimple(session);
 
+// Tip: if your Neon DATABASE_URL requires SSL on Render, ensure the env
+// includes `?sslmode=require` or configure a pg Pool with ssl instead.
 app.use(
   session({
     store: new PgSession({
@@ -56,13 +59,14 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production", // secure only in prod
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 1000 * 60 * 60 * 24 * 7,
     },
   })
 );
 
+// Routes
 app.use("/api/store/register", registerRouter);
 app.use("/api/store/login", loginRouter);
 app.use("/api/store/create", postingRouter);
@@ -73,17 +77,16 @@ app.use("/api/store/search", searchRouter);
 app.use("/api/store", listingRouter);
 app.use("/api/user", userRouter);
 
+// Healthcheck
 app.get("/api", (req, res) => {
   res.send("Hello from Express Server");
 });
 
+// Global error handler
 app.use((err, req, res, next) => {
   console.error("Server Error:", err);
   res.status(500).json({ error: err.message });
 });
 
-// ✅ This keeps the server alive on Render!
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// ⛔️ Do NOT call app.listen here. server.js will handle it.
+export default app;
