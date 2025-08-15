@@ -24,7 +24,7 @@ function extractImageData(req) {
     const b64 = req.file.buffer.toString("base64");
     return `data:${mime};base64,${b64}`;
   }
-  return undefined;
+  return undefined; // "no change" for updates
 }
 
 /**
@@ -43,7 +43,7 @@ router.get(["/posts", "/listings"], requireAdmin, async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
     const { rows } = await pool.query(
-      `SELECT * FROM postings ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT * FROM postings ORDER BY id DESC LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
     res.json(rows);
@@ -78,8 +78,7 @@ router.put(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, up
              price       = COALESCE($3, price),
              category    = COALESCE($4, category),
              location    = COALESCE($5, location),
-             image       = COALESCE($6, image),
-             updated_at  = NOW()
+             image       = COALESCE($6, image)
        WHERE id = $7
        RETURNING *`,
       [title, description, price, category, location, imageValue, req.params.id]
@@ -139,7 +138,7 @@ router.post("/migrate-uploads", requireAdmin, async (_req, res) => {
           buf = Buffer.from(r.data);
           break;
         } catch {
-          // next base
+          // try next base
         }
       }
 
@@ -155,10 +154,7 @@ router.post("/migrate-uploads", requireAdmin, async (_req, res) => {
         ext === "webp" ? "image/webp" : "application/octet-stream";
 
       const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
-      await pool.query(`UPDATE postings SET image = $1, updated_at = NOW() WHERE id = $2`, [
-        dataUrl,
-        row.id,
-      ]);
+      await pool.query(`UPDATE postings SET image = $1 WHERE id = $2`, [dataUrl, row.id]);
       migrated.push(row.id);
     }
 
