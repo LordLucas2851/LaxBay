@@ -9,14 +9,15 @@ export default function AdminPanel() {
   const [fetchError, setFetchError] = useState(null);
   const navigate = useNavigate();
 
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api";
-
-  const imageUrl = (raw) => {
+  // inline image helper (no separate file)
+  const API = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+  const imgSrc = (raw) => {
     if (!raw) return "";
-    const normalized = String(raw).replace(/\\/g, "/");
-    if (/^https?:\/\//i.test(normalized)) return normalized;
-    const apiOrigin = API_BASE.replace(/\/api\/?$/, "");
-    return `${apiOrigin}/${normalized.replace(/^\/+/, "")}`;
+    const s = String(raw).replace(/\\/g, "/");
+    if (/^data:image\//i.test(s)) return s;               // DB data URL
+    if (/^https?:\/\//i.test(s)) return s;                // absolute URL
+    const origin = API.replace(/\/api\/?$/, "");          // backend origin
+    return `${origin}/${s.replace(/^\/+/, "")}`;          // legacy /uploads/*
   };
 
   useEffect(() => {
@@ -25,7 +26,7 @@ export default function AdminPanel() {
       setLoading(true);
       setFetchError(null);
       try {
-        const res = await apiClient.get("/store/admin/listings");
+        const res = await apiClient.get("/store/admin/listings", { withCredentials: true });
         if (alive) setListings(res.data);
       } catch (err) {
         console.error("Failed to fetch listings:", err);
@@ -40,7 +41,7 @@ export default function AdminPanel() {
   const handleDelete = async (postId) => {
     if (!window.confirm("Are you sure you want to delete this post?")) return;
     try {
-      await apiClient.delete(`/store/admin/posts/${postId}`);
+      await apiClient.delete(`/store/admin/posts/${postId}`, { withCredentials: true });
       setListings((prev) => prev.filter((post) => post.id !== postId));
     } catch (error) {
       console.error("Delete failed:", error);
@@ -83,9 +84,10 @@ export default function AdminPanel() {
             className="border p-4 rounded shadow bg-white hover:shadow-lg transition-transform transform hover:scale-105 cursor-pointer"
           >
             <img
-              src={imageUrl(post.image)}
+              src={imgSrc(post.image)}
               alt={post.title}
               className="w-full h-40 object-cover rounded"
+              onError={(e) => { e.currentTarget.src = ""; }}
             />
             <h3 className="text-xl font-bold mt-2">{post.title}</h3>
             <p className="text-sm text-gray-600 mb-2">{post.location}</p>
