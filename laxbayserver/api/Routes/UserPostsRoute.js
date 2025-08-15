@@ -1,10 +1,15 @@
 import express from "express";
 import multer from "multer";
 import path from "path";
+import { fileURLToPath } from "url";
 import pool from "./PoolConnection.js";
-import { UPLOAD_DIR } from "../index.js";
 
 const router = express.Router();
+
+// Resolve absolute uploads dir
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const UPLOAD_DIR = path.join(__dirname, "../uploads");
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
@@ -25,7 +30,7 @@ const mustBeAuthed = (req, res) => {
   return username;
 };
 
-// GET (owner-only)
+// GET /api/store/user/post/:id (alias) or /posts/:id (preferred)
 router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
@@ -44,7 +49,7 @@ router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   }
 });
 
-// PUT (owner-only)
+// PUT /api/store/user/update/:id (alias) or /posts/:id (preferred)
 router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
