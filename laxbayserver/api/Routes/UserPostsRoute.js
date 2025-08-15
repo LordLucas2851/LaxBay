@@ -51,6 +51,7 @@ router.get(["/post/:id", "/posts/:id"], async (req, res) => {
 });
 
 // PUT /api/store/user/update/:id  or /posts/:id
+// Supports partial updates and ignores empty strings
 router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
@@ -63,16 +64,16 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
     );
     if (owned.length === 0) return res.status(403).json({ error: "Not your post or not found" });
 
-    const { title, description, price, category, location } = req.body;
+    const { title = "", description = "", price = "", category = "", location = "" } = req.body;
     const imageValue = extractImageData(req);
 
     const { rows } = await pool.query(
       `UPDATE postings
-         SET title       = COALESCE($1, title),
-             description = COALESCE($2, description),
-             price       = COALESCE($3, price),
-             category    = COALESCE($4, category),
-             location    = COALESCE($5, location),
+         SET title       = COALESCE(NULLIF($1, ''), title),
+             description = COALESCE(NULLIF($2, ''), description),
+             price       = COALESCE(NULLIF($3, '')::numeric, price),
+             category    = COALESCE(NULLIF($4, ''), category),
+             location    = COALESCE(NULLIF($5, ''), location),
              image       = COALESCE($6, image)
        WHERE id = $7 AND username = $8
        RETURNING *`,
@@ -83,6 +84,32 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
   } catch (err) {
     console.error("Owner update error:", err);
     res.status(500).json({ error: "Server error updating post" });
+  }
+});
+
+// Image-only endpoint for owners
+router.post(["/posts/:id/image", "/update/:id/image"], upload.single("image"), async (req, res) => {
+  try {
+    const username = mustBeAuthed(req, res);
+    if (!username) return;
+
+    const { rows: owned } = await pool.query(
+      `SELECT id FROM postings WHERE id = $1 AND username = $2`,
+      [req.params.id, username]
+    );
+    if (owned.length === 0) return res.status(403).json({ error: "Not your post or not found" });
+
+    const imageValue = extractImageData(req);
+    if (!imageValue) return res.status(400).json({ error: "No image provided" });
+
+    const { rows } = await pool.query(
+      `UPDATE postings SET image = $1 WHERE id = $2 RETURNING *`,
+      [imageValue, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Owner image-only update error:", err);
+    res.status(500).json({ error: "Server error updating image" });
   }
 });
 
