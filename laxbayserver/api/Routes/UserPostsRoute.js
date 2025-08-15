@@ -3,15 +3,13 @@ import pg from "pg";
 import multer from "multer";
 
 const router = express.Router();
+const upload = multer({ dest: "uploads/" });
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
 });
 
-const upload = multer({ dest: "uploads/" });
-
-// Helper: check login
 const mustBeAuthed = (req, res) => {
   const username = req.session?.username;
   if (!username) {
@@ -21,18 +19,18 @@ const mustBeAuthed = (req, res) => {
   return username;
 };
 
-// GET post by ID (supports /post/:id and /posts/:id)
+// GET your own post by ID
+// supports both /post/:id and /posts/:id
 router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
     if (!username) return;
 
     const { rows } = await pool.query(
-      "SELECT * FROM listings WHERE id = $1 AND username = $2",
+      `SELECT * FROM postings WHERE id = $1 AND username = $2`,
       [req.params.id, username]
     );
     if (rows.length === 0) return res.status(404).json({ error: "Not found" });
-
     res.json(rows[0]);
   } catch (err) {
     console.error("Fetch post error:", err);
@@ -40,14 +38,15 @@ router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   }
 });
 
-// UPDATE post by ID (supports /update/:id and /posts/:id)
+// UPDATE your own post by ID (image optional)
+// supports both /update/:id and /posts/:id
 router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
     if (!username) return;
 
     const { rows: owned } = await pool.query(
-      "SELECT id FROM listings WHERE id = $1 AND username = $2",
+      `SELECT id FROM postings WHERE id = $1 AND username = $2`,
       [req.params.id, username]
     );
     if (owned.length === 0) {
@@ -58,7 +57,7 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
     const imagePath = req.file ? req.file.path : undefined;
 
     const { rows } = await pool.query(
-      `UPDATE listings
+      `UPDATE postings
          SET title = COALESCE($1, title),
              description = COALESCE($2, description),
              price = COALESCE($3, price),
