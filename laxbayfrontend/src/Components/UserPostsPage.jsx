@@ -1,142 +1,138 @@
-import React, { useEffect, useState } from "react";
-import axios from "axios";
-import { useNavigate } from "react-router-dom";
+// api/Routes/UserPostsRoute.js
+import express from "express";
+import multer from "multer";
+import pool from "./PoolConnection.js";
 
-// ✅ Correct env var: includes /api
-const API = import.meta.env.VITE_API_BASE_URL;
+const router = express.Router();
 
-// Build proper image URLs (strip /api to hit /uploads)
-const getImageUrl = (imagePath) => {
-  if (!imagePath) return "";
-  const normalized = String(imagePath).replace(/\\/g, "/");
-  if (/^https?:\/\//i.test(normalized)) return normalized;
-  const origin = (API || "").replace(/\/api\/?$/, "");
-  return `${origin}/${normalized.replace(/^\/+/, "")}`;
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+const mustBeAuthed = (req, res) => {
+  const username = req.session?.username;
+  if (!username) {
+    res.status(401).json({ error: "Not authenticated" });
+    return null;
+  }
+  return username;
 };
 
-function UserPostsPage() {
-  const [posts, setPosts] = useState([]);
-  const [expandedPostId, setExpandedPostId] = useState(null);
-  const [error, setError] = useState("");
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    fetchUserPosts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const fetchUserPosts = async () => {
-    setError("");
-    try {
-      const res = await axios.get(`${API}/store/user`, { withCredentials: true });
-      // Backend now returns 200 [] when no posts (see server fix below)
-      setPosts(Array.isArray(res.data) ? res.data : []);
-    } catch (err) {
-      console.error("Error fetching user posts:", err);
-      // If unauthorized, nudge to login; otherwise show a friendly message
-      if (err?.response?.status === 401) {
-        setError("Please log in to view your posts.");
-      } else {
-        setError("Failed to load your posts. Please try again.");
-      }
-      setPosts([]);
-    }
-  };
-
-  const handleDelete = async (postId) => {
-    if (!window.confirm("Delete this post?")) return;
-    try {
-      await axios.delete(`${API}/store/user/${postId}`, { withCredentials: true });
-      setPosts((ps) => ps.filter((p) => p.id !== postId));
-    } catch (err) {
-      console.error("Error deleting post:", err);
-      alert(err?.response?.data?.error || "Failed to delete post.");
-    }
-  };
-
-  const toggleExpand = (postId) => {
-    setExpandedPostId((id) => (id === postId ? null : postId));
-  };
-
-  return (
-    <div className="max-w-6xl mx-auto p-6 bg-white shadow-lg rounded-lg">
-      <h2 className="text-4xl font-bold text-center mb-6">My Posts</h2>
-
-      {error && (
-        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3 text-center">
-          {error}
-        </div>
-      )}
-
-      {posts.length === 0 && !error ? (
-        <p className="text-center">No posts found.</p>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {posts.map((post) => (
-            <div
-              key={post.id}
-              onClick={() => toggleExpand(post.id)}
-              className="border rounded-lg p-4 shadow-lg hover:shadow-xl transition-transform transform hover:scale-105 cursor-pointer"
-            >
-              <h3 className="text-2xl font-semibold text-center mb-1">
-                {post.title ?? post.name}
-              </h3>
-              <p className="text-base text-gray-500 text-center mb-2">
-                {post.category}
-              </p>
-
-              {post.image && (
-                <div className="mb-4 flex justify-center">
-                  <img
-                    src={getImageUrl(post.image)}
-                    alt="Post"
-                    className="w-32 h-32 object-cover rounded border"
-                  />
-                </div>
-              )}
-
-              {expandedPostId === post.id && (
-                <div className="text-center">
-                  <p className="text-lg text-gray-700 font-medium mb-4 px-2">
-                    {post.description}
-                  </p>
-                  <p className="text-base text-gray-800 mb-1">
-                    <strong className="text-gray-900">Price:</strong>{" "}
-                    <span className="font-semibold">${post.price}</span>
-                  </p>
-                  <p className="text-base text-gray-800 mb-2">
-                    <strong className="text-gray-900">Location:</strong>{" "}
-                    {post.location}
-                  </p>
-                </div>
-              )}
-
-              <div className="flex gap-2 mt-4">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(post.id);
-                  }}
-                  className="flex-1 bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition-colors"
-                >
-                  Delete
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(`/edit/${post.id}`);
-                  }}
-                  className="flex-1 bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors"
-                >
-                  Edit
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+function extractImageData(req) {
+  const data = req.body?.imageData || req.body?.image;
+  if (data && /^data:image\/(png|jpeg|jpg|webp);base64,/.test(String(data))) {
+    return String(data);
+  }
+  if (req.file?.buffer) {
+    const mime = req.file.mimetype || "image/png";
+    const b64 = req.file.buffer.toString("base64");
+    return `data:${mime};base64,${b64}`;
+  }
+  return undefined; // no change
 }
 
-export default UserPostsPage;
+/* ===================== NEW: list your own posts ===================== */
+// GET /api/store/user/posts   (returns [] if none)
+router.get(["/posts", "/my", "/mine"], async (req, res) => {
+  try {
+    const username = mustBeAuthed(req, res);
+    if (!username) return;
+
+    const { rows } = await pool.query(
+      `SELECT * FROM postings WHERE username = $1 ORDER BY id DESC`,
+      [username]
+    );
+
+    // Always 200 with an array (possibly empty)
+    res.json(rows);
+  } catch (err) {
+    console.error("Owner list error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+/* ===================== existing endpoints ===================== */
+
+// GET /api/store/user/post(s)/:id
+router.get(["/post/:id", "/posts/:id"], async (req, res) => {
+  try {
+    const username = mustBeAuthed(req, res);
+    if (!username) return;
+
+    const { rows } = await pool.query(
+      `SELECT * FROM postings WHERE id = $1 AND username = $2`,
+      [req.params.id, username]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: "Not found" });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Owner get error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// PUT /api/store/user/update/:id  or /posts/:id
+// Supports partial updates and ignores empty strings
+router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, res) => {
+  try {
+    const username = mustBeAuthed(req, res);
+    if (!username) return;
+
+    // Ensure ownership
+    const { rows: owned } = await pool.query(
+      `SELECT id FROM postings WHERE id = $1 AND username = $2`,
+      [req.params.id, username]
+    );
+    if (owned.length === 0) return res.status(403).json({ error: "Not your post or not found" });
+
+    const { title = "", description = "", price = "", category = "", location = "" } = req.body;
+    const imageValue = extractImageData(req);
+
+    const { rows } = await pool.query(
+      `UPDATE postings
+         SET title       = COALESCE(NULLIF($1, ''), title),
+             description = COALESCE(NULLIF($2, ''), description),
+             price       = COALESCE(NULLIF($3, '')::numeric, price),
+             category    = COALESCE(NULLIF($4, ''), category),
+             location    = COALESCE(NULLIF($5, ''), location),
+             image       = COALESCE($6, image)
+       WHERE id = $7 AND username = $8
+       RETURNING *`,
+      [title, description, price, category, location, imageValue, req.params.id, username]
+    );
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Owner update error:", err);
+    res.status(500).json({ error: "Server error updating post" });
+  }
+});
+
+// Image-only endpoint for owners
+router.post(["/posts/:id/image", "/update/:id/image"], upload.single("image"), async (req, res) => {
+  try {
+    const username = mustBeAuthed(req, res);
+    if (!username) return;
+
+    const { rows: owned } = await pool.query(
+      `SELECT id FROM postings WHERE id = $1 AND username = $2`,
+      [req.params.id, username]
+    );
+    if (owned.length === 0) return res.status(403).json({ error: "Not your post or not found" });
+
+    const imageValue = extractImageData(req);
+    if (!imageValue) return res.status(400).json({ error: "No image provided" });
+
+    const { rows } = await pool.query(
+      `UPDATE postings SET image = $1 WHERE id = $2 RETURNING *`,
+      [imageValue, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Owner image-only update error:", err);
+    res.status(500).json({ error: "Server error updating image" });
+  }
+});
+
+export default router;
