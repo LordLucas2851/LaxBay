@@ -1,54 +1,51 @@
 import express from "express";
-import pool from "./PoolConnection.js"; 
+import pg from "pg";
 
-const listingRouter = express.Router();
+const router = express.Router();
 
-listingRouter.get("/", async (req, res) => {
-  const searchTerm = req.query.search || "";
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false
+});
 
+/**
+ * GET /api/store/listings
+ * Public listing feed (pagination)
+ */
+router.get("/listings", async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT * FROM postings WHERE name ILIKE $1 OR description ILIKE $1", 
-      [`%${searchTerm}%`]
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+    const { rows } = await pool.query(
+      `SELECT * FROM postings
+       ORDER BY created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
-
-    res.status(200).json(result.rows);
-  } catch (error) {
-    console.error("Error fetching listings:", error);
-    res.status(500).json({ error: "Server error. Please try again later." });
+    res.json(rows);
+  } catch (err) {
+    console.error("Fetch postings error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-listingRouter.get("/recommended", async (req, res) => {
+/**
+ * GET /api/store/listings/:id
+ * Public single posting
+ */
+router.get("/listings/:id", async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT * FROM postings
-      ORDER BY RANDOM()
-      LIMIT 5
-    `);
-
-    res.status(200).json(result.rows);
-  } catch (error) {
-    console.error("Error fetching recommended listings:", error);
-    res.status(500).json({ error: "Server error. Please try again later." });
+    const { rows } = await pool.query(
+      `SELECT * FROM postings WHERE id = $1`,
+      [req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: "Not found" });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Fetch posting error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-listingRouter.get("/postdetails/:postId", async (req, res) => {
-  const { postId } = req.params;
-
-  try {
-    const result = await pool.query("SELECT * FROM postings WHERE id = $1", [postId]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "Post not found" });
-    }
-
-    res.status(200).json(result.rows[0]);
-  } catch (error) {
-    console.error("Error fetching post details:", error);
-    res.status(500).json({ error: "Server error. Please try again later." });
-  }
-});
-
-export default listingRouter;
+export default router;
