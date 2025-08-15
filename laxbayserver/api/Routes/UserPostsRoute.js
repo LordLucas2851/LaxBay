@@ -1,25 +1,13 @@
 import express from "express";
 import multer from "multer";
-import path from "path";
-import { fileURLToPath } from "url";
 import pool from "./PoolConnection.js";
 
 const router = express.Router();
 
-// absolute uploads dir
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const UPLOAD_DIR = path.join(__dirname, "../uploads");
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "");
-    const name = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    cb(null, name);
-  },
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 const mustBeAuthed = (req, res) => {
   const username = req.session?.username;
@@ -29,6 +17,19 @@ const mustBeAuthed = (req, res) => {
   }
   return username;
 };
+
+function extractImageData(req) {
+  const data = req.body?.imageData || req.body?.image;
+  if (data && /^data:image\/(png|jpeg|jpg|webp);base64,/.test(String(data))) {
+    return String(data);
+  }
+  if (req.file?.buffer) {
+    const mime = req.file.mimetype || "image/png";
+    const b64 = req.file.buffer.toString("base64");
+    return `data:${mime};base64,${b64}`;
+  }
+  return undefined; // means "do not change"
+}
 
 // GET your own post (EditPost.jsx GET)
 router.get(["/post/:id", "/posts/:id"], async (req, res) => {
@@ -48,7 +49,7 @@ router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   }
 });
 
-// UPDATE your own post (EditPost.jsx PUT — multipart)
+// UPDATE your own post (EditPost.jsx PUT — JSON or multipart)
 router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
@@ -62,7 +63,7 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
     if (owned.length === 0) return res.status(403).json({ error: "Not your post or not found" });
 
     const { title, description, price, category, location } = req.body;
-    const newImage = req.file ? `uploads/${req.file.filename}` : undefined;
+    const imageValue = extractImageData(req); // data-URL string or undefined
 
     const { rows } = await pool.query(
       `UPDATE public.postings
@@ -75,7 +76,7 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
              updated_at  = NOW()
        WHERE id = $7 AND username = $8
        RETURNING *`,
-      [title, description, price, category, location, newImage, req.params.id, username]
+      [title, description, price, category, location, imageValue, req.params.id, username]
     );
 
     res.json(rows[0]);
