@@ -1,8 +1,9 @@
+// frontend/src/pages/EditPost.jsx
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useNavigate, useParams } from "react-router-dom";
 
-// ✅ Correct base (must be set in Vercel): https://laxbay.onrender.com/api
+// Set this in Vercel env: VITE_API_BASE_URL = https://<your-render-app>.onrender.com/api
 const API = import.meta.env.VITE_API_BASE_URL;
 
 // Build /uploads URL by stripping /api from base
@@ -15,7 +16,7 @@ const getImageUrl = (imagePath) => {
 };
 
 export default function EditPost() {
-  const { postId } = useParams();        // route should be /edit/:postId
+  const { postId } = useParams(); // route should be /edit/:postId
   const navigate = useNavigate();
 
   const [title, setTitle] = useState("");
@@ -35,8 +36,8 @@ export default function EditPost() {
     let alive = true;
     (async () => {
       try {
-        // Load your own post details from user route
-        const res = await axios.get(`${API}/store/user/post/${postId}`, {
+        // GET /api/store/user/posts/:id
+        const res = await axios.get(`${API}/store/user/posts/${postId}`, {
           withCredentials: true
         });
         if (!alive) return;
@@ -54,7 +55,9 @@ export default function EditPost() {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [postId]);
 
   const handleImageChange = (e) => {
@@ -89,12 +92,12 @@ export default function EditPost() {
       fd.append("price", price);
       fd.append("category", category);
       fd.append("location", location || sessionStorage.getItem("city") || "");
-      if (image) fd.append("image", image); // send file only if selected
+      if (image) fd.append("image", image);
 
-      // ✅ User update endpoint (your backend already has this)
-      const res = await axios.put(`${API}/store/user/update/${postId}`, fd, {
+      // PUT /api/store/user/posts/:id
+      const res = await axios.put(`${API}/store/user/posts/${postId}`, fd, {
         withCredentials: true,
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": "multipart/form-data" }
       });
 
       console.log("Update ok:", res.data);
@@ -121,19 +124,46 @@ export default function EditPost() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <input className="w-full border p-2 rounded" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" />
+        <input
+          className="w-full border p-2 rounded"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Title"
+        />
         {errors.title && <span className="text-red-600">{errors.title}</span>}
 
-        <textarea className="w-full border p-2 rounded" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" />
+        <textarea
+          className="w-full border p-2 rounded"
+          rows={4}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Description"
+        />
         {errors.description && <span className="text-red-600">{errors.description}</span>}
 
-        <input className="w-full border p-2 rounded" type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Price ($)" />
+        <input
+          className="w-full border p-2 rounded"
+          type="number"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          placeholder="Price ($)"
+        />
         {errors.price && <span className="text-red-600">{errors.price}</span>}
 
-        <input className="w-full border p-2 rounded" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Category" />
+        <input
+          className="w-full border p-2 rounded"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          placeholder="Category"
+        />
         {errors.category && <span className="text-red-600">{errors.category}</span>}
 
-        <input className="w-full border p-2 rounded" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Location" />
+        <input
+          className="w-full border p-2 rounded"
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+          placeholder="Location"
+        />
 
         <div>
           <label className="block text-sm font-medium mb-1">Current Image</label>
@@ -147,7 +177,9 @@ export default function EditPost() {
         <div>
           <label className="block text-sm font-medium mb-1">Replace Image (optional)</label>
           <input type="file" accept="image/*" onChange={handleImageChange} />
-          {imagePreview && <img src={imagePreview} alt="Preview" className="w-40 h-40 object-cover mt-2 rounded border" />}
+          {imagePreview && (
+            <img src={imagePreview} alt="Preview" className="w-40 h-40 object-cover mt-2 rounded border" />
+          )}
         </div>
 
         <button
