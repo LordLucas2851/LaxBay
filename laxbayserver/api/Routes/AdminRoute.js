@@ -5,7 +5,7 @@ import axios from "axios";
 import pool from "./PoolConnection.js";
 
 const router = express.Router();
-// TODO: replace with real admin auth
+// TODO: replace with real admin check
 const requireAdmin = (req, _res, next) => next();
 
 const upload = multer({
@@ -33,6 +33,7 @@ function extractImageData(req) {
  *   GET    /posts           , /listings
  *   GET    /posts/:id       , /listings/:id       , /postdetails/:id
  *   PUT    /posts/:id       , /listings/:id       , /postdetails/:id
+ *   POST   /posts/:id/image , /listings/:id/image , /postdetails/:id/image  (image-only)
  *   DELETE /posts/:id       , /listings/:id       , /postdetails/:id
  *   POST   /migrate-uploads (one-shot migration from GitHub -> DB data-URLs)
  */
@@ -65,32 +66,70 @@ router.get(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, as
   }
 });
 
-// Edit (JSON or multipart; image optional)
-router.put(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, upload.single("image"), async (req, res) => {
-  try {
-    const { title, description, price, category, location } = req.body;
-    const imageValue = extractImageData(req);
+// Edit (JSON or multipart; supports partial updates + ignores empty strings)
+router.put(
+  ["/posts/:id", "/listings/:id", "/postdetails/:id"],
+  requireAdmin,
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      const { title = "", description = "", price = "", category = "", location = "" } = req.body;
+      const imageValue = extractImageData(req); // undefined => keep current
 
-    const { rows } = await pool.query(
-      `UPDATE postings
-         SET title       = COALESCE($1, title),
-             description = COALESCE($2, description),
-             price       = COALESCE($3, price),
-             category    = COALESCE($4, category),
-             location    = COALESCE($5, location),
-             image       = COALESCE($6, image)
-       WHERE id = $7
-       RETURNING *`,
-      [title, description, price, category, location, imageValue, req.params.id]
-    );
+      const params = [
+        title,          // $1
+        description,    // $2
+        price,          // $3
+        category,       // $4
+        location,       // $5
+        imageValue,     // $6 (may be undefined)
+        req.params.id,  // $7
+      ];
 
-    if (rows.length === 0) return res.status(404).json({ error: "Not found" });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error("Admin update error:", err);
-    res.status(500).json({ error: "Server error" });
+      const { rows } = await pool.query(
+        `UPDATE postings
+           SET title       = COALESCE(NULLIF($1, ''), title),
+               description = COALESCE(NULLIF($2, ''), description),
+               price       = COALESCE(NULLIF($3, '')::numeric, price),
+               category    = COALESCE(NULLIF($4, ''), category),
+               location    = COALESCE(NULLIF($5, ''), location),
+               image       = COALESCE($6, image)
+         WHERE id = $7
+         RETURNING *`,
+        params
+      );
+
+      if (rows.length === 0) return res.status(404).json({ error: "Not found" });
+      res.json(rows[0]);
+    } catch (err) {
+      console.error("Admin update error:", err);
+      res.status(500).json({ error: "Server error" });
+    }
   }
-});
+);
+
+// Image-only endpoint (JSON base64 or multipart)
+router.post(
+  ["/posts/:id/image", "/listings/:id/image", "/postdetails/:id/image"],
+  requireAdmin,
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      const imageValue = extractImageData(req);
+      if (!imageValue) return res.status(400).json({ error: "No image provided" });
+
+      const { rows } = await pool.query(
+        `UPDATE postings SET image = $1 WHERE id = $2 RETURNING *`,
+        [imageValue, req.params.id]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "Not found" });
+      res.json(rows[0]);
+    } catch (err) {
+      console.error("Admin image-only update error:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  }
+);
 
 // Delete
 router.delete(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, async (req, res) => {
@@ -138,7 +177,7 @@ router.post("/migrate-uploads", requireAdmin, async (_req, res) => {
           buf = Buffer.from(r.data);
           break;
         } catch {
-          // try next base
+          // next base
         }
       }
 
