@@ -4,20 +4,16 @@ import pool from "./PoolConnection.js";
 
 const router = express.Router();
 
-// Use memory storage to avoid writing temp files
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-// Helper: turn multipart file buffer into data URL; or use provided imageData
 function extractImageData(req) {
-  // JSON base64 path
   const data = req.body?.imageData || req.body?.image;
   if (data && /^data:image\/(png|jpeg|jpg|webp);base64,/.test(String(data))) {
     return String(data);
   }
-  // Multipart file path
   if (req.file?.buffer) {
     const mime = req.file.mimetype || "image/png";
     const b64 = req.file.buffer.toString("base64");
@@ -26,7 +22,7 @@ function extractImageData(req) {
   return null;
 }
 
-// Mounted at /api/store/create  => POST /api/store/create/
+// POST /api/store/create/
 router.post("/", upload.single("image"), async (req, res) => {
   try {
     const username = req.session?.username;
@@ -37,10 +33,10 @@ router.post("/", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "All fields must be provided" });
     }
 
-    const imageValue = extractImageData(req); // may be null
+    const imageValue = extractImageData(req);
 
     const { rows } = await pool.query(
-      `INSERT INTO public.postings
+      `INSERT INTO postings
          (username, title, description, price, category, location, image)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
