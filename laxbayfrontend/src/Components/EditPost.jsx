@@ -6,7 +6,6 @@ import { useNavigate, useParams } from "react-router-dom";
 // Must be set in Vercel env: VITE_API_BASE_URL = https://laxbay.onrender.com/api
 const API = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 
-// Build /uploads URL by stripping /api from base
 const getImageUrl = (imagePath) => {
   if (!imagePath) return "";
   const normalized = String(imagePath).replace(/\\/g, "/");
@@ -17,10 +16,13 @@ const getImageUrl = (imagePath) => {
 };
 
 export default function EditPost() {
-  const { postId } = useParams(); // route should be /edit/:postId
+  const { postId } = useParams(); // /edit/:postId
   const navigate = useNavigate();
 
-  // Current editable values (prefilled)
+  const role = (typeof window !== "undefined" && sessionStorage.getItem("role")) || "";
+  const isAdmin = role === "admin";
+
+  // current values
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
@@ -28,33 +30,29 @@ export default function EditPost() {
   const [location, setLocation] = useState("");
   const [currentImage, setCurrentImage] = useState("");
 
-  // Image selection
+  // image selection
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
 
-  // UI flags
+  // ui
   const [errors, setErrors] = useState({});
   const [errMsg, setErrMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [imgSaving, setImgSaving] = useState(false);
 
-  // Original values to detect what actually changed
+  // remember originals to send only changes
   const originalRef = useRef({
-    title: "",
-    description: "",
-    price: "",
-    category: "",
-    location: "",
-    image: "",
+    title: "", description: "", price: "", category: "", location: "", image: "",
   });
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        // GET /api/store/user/posts/:id
-        const res = await axios.get(`${API}/store/user/posts/${postId}`, {
+        // Use PUBLIC DETAILS so both admin & owner can fetch:
+        // GET /api/store/postdetails/:id
+        const res = await axios.get(`${API}/store/postdetails/${postId}`, {
           withCredentials: true,
         });
         if (!alive) return;
@@ -66,23 +64,8 @@ export default function EditPost() {
         const loc = p.location ?? "";
         const img = p.image ?? "";
 
-        // Prefill inputs
-        setTitle(t);
-        setDescription(d);
-        setPrice(pr);
-        setCategory(c);
-        setLocation(loc);
-        setCurrentImage(img);
-
-        // Remember originals
-        originalRef.current = {
-          title: t,
-          description: d,
-          price: pr,
-          category: c,
-          location: loc,
-          image: img,
-        };
+        setTitle(t); setDescription(d); setPrice(pr); setCategory(c); setLocation(loc); setCurrentImage(img);
+        originalRef.current = { title: t, description: d, price: pr, category: c, location: loc, image: img };
       } catch (e) {
         console.error("Error fetching post data:", e);
         setErrMsg(e?.response?.data?.error || "Failed to fetch post data.");
@@ -90,9 +73,7 @@ export default function EditPost() {
         if (alive) setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [postId]);
 
   const handleImageChange = (e) => {
@@ -101,24 +82,22 @@ export default function EditPost() {
     setImagePreview(file ? URL.createObjectURL(file) : null);
   };
 
-  // Detect which fields actually changed
+  // only send changed fields
   const diffPayload = () => {
     const out = {};
     const o = originalRef.current;
-
     if (title !== o.title) out.title = title;
     if (description !== o.description) out.description = description;
     if (price !== o.price) out.price = price;
-    if (category !== o.category) out.category = category;
     if ((location || "") !== (o.location || "")) {
       out.location = location || sessionStorage.getItem("city") || "";
     }
-    if (image) out.image = image; // file chosen
-
+    if (category !== o.category) out.category = category;
+    if (image) out.image = image;
     return out;
   };
 
-  // Only validate fields we’re sending (changed)
+  // validate only fields we will send
   const validateForm = (payload) => {
     const errs = {};
     if ("title" in payload) {
@@ -131,45 +110,35 @@ export default function EditPost() {
     }
     if ("price" in payload) {
       const p = Number(payload.price);
-      if (payload.price && (!Number.isFinite(p) || p <= 0)) {
-        errs.price = "Price must be a valid number greater than 0.";
-      }
+      if (payload.price && (!Number.isFinite(p) || p <= 0)) errs.price = "Price must be a valid number > 0.";
     }
     if ("category" in payload) {
-      if (payload.category && !String(payload.category).trim()) {
-        errs.category = "Category cannot be blank.";
-      }
+      if (payload.category && !String(payload.category).trim()) errs.category = "Category cannot be blank.";
     }
     return errs;
-  };
+    };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setErrMsg("");
-    setErrors({});
+    setErrMsg(""); setErrors({});
 
     const changes = diffPayload();
-
-    // If no fields changed, nudge the user
     if (Object.keys(changes).length === 0) {
       setErrMsg("No changes to save.");
       return;
     }
-
-    // Validate only changed fields
     const formErrors = validateForm(changes);
     if (Object.keys(formErrors).length > 0) {
       setErrors(formErrors);
       return;
     }
 
-    // Build request: JSON if no file, FormData if file
-    let config = { withCredentials: true };
-    let body;
+    // choose endpoint based on role
+    const basePath = isAdmin ? `${API}/store/admin/posts/${postId}` : `${API}/store/user/posts/${postId}`;
 
+    let body, config = { withCredentials: true };
     if (changes.image) {
       const fd = new FormData();
-      // Only append changed fields
       if ("title" in changes) fd.append("title", changes.title);
       if ("description" in changes) fd.append("description", changes.description);
       if ("price" in changes) fd.append("price", changes.price);
@@ -179,14 +148,14 @@ export default function EditPost() {
       body = fd;
       config.headers = { "Content-Type": "multipart/form-data" };
     } else {
-      body = changes; // JSON
+      body = changes;
       config.headers = { "Content-Type": "application/json" };
     }
 
     setSaving(true);
     try {
-      // PUT /api/store/user/posts/:id  (backend ignores empty & keeps originals)
-      const res = await axios.put(`${API}/store/user/posts/${postId}`, body, config);
+      // PUT admin or owner route
+      const res = await axios.put(basePath, body, config);
       console.log("Update ok:", res.data);
       alert("Post updated successfully!");
       navigate(-1);
@@ -198,27 +167,28 @@ export default function EditPost() {
     }
   };
 
-  // Quick image-only update using the dedicated endpoint
+  // quick image-only endpoint (admin vs owner)
   const handleQuickImageUpdate = async () => {
     if (!image) {
       setErrMsg("Choose an image first.");
       return;
     }
-    setErrMsg("");
-    setImgSaving(true);
+    setErrMsg(""); setImgSaving(true);
+    const url = isAdmin
+      ? `${API}/store/admin/posts/${postId}/image`
+      : `${API}/store/user/posts/${postId}/image`;
     try {
       const fd = new FormData();
       fd.append("image", image);
-      const res = await axios.post(`${API}/store/user/posts/${postId}/image`, fd, {
+      const res = await axios.post(url, fd, {
         withCredentials: true,
         headers: { "Content-Type": "multipart/form-data" },
       });
       setCurrentImage(res.data?.image || currentImage);
-      alert("Image updated!");
-      setImage(null);
-      setImagePreview(null);
-      // Update original image reference so further diffs are correct
+      // update original image to avoid false diffs
       originalRef.current.image = res.data?.image || originalRef.current.image;
+      setImage(null); setImagePreview(null);
+      alert("Image updated!");
     } catch (e) {
       console.error("Quick image update failed:", e);
       setErrMsg(e?.response?.data?.error || e.message || "Failed to update image.");
@@ -231,7 +201,7 @@ export default function EditPost() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 bg-white shadow-md rounded-lg">
-      <h2 className="text-2xl font-bold mb-4">Edit Listing</h2>
+      <h2 className="text-2xl font-bold mb-4">Edit Listing {isAdmin && <span className="text-xs text-gray-500">(admin)</span>}</h2>
 
       {errMsg && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">
@@ -241,56 +211,27 @@ export default function EditPost() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <label className="block text-sm font-medium">Title</label>
-        <input
-          className="w-full border p-2 rounded"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Title"
-        />
+        <input className="w-full border p-2 rounded" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" />
         {errors.title && <span className="text-red-600">{errors.title}</span>}
 
         <label className="block text-sm font-medium">Description</label>
-        <textarea
-          className="w-full border p-2 rounded"
-          rows={4}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Description"
-        />
+        <textarea className="w-full border p-2 rounded" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" />
         {errors.description && <span className="text-red-600">{errors.description}</span>}
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium">Price ($)</label>
-            <input
-              className="w-full border p-2 rounded"
-              type="number"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              placeholder="Price"
-            />
+            <input className="w-full border p-2 rounded" type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Price" />
             {errors.price && <span className="text-red-600">{errors.price}</span>}
           </div>
-
           <div>
             <label className="block text-sm font-medium">Category</label>
-            <input
-              className="w-full border p-2 rounded"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              placeholder="Category"
-            />
+            <input className="w-full border p-2 rounded" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Category" />
             {errors.category && <span className="text-red-600">{errors.category}</span>}
           </div>
-
           <div>
             <label className="block text-sm font-medium">Location</label>
-            <input
-              className="w-full border p-2 rounded"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="Location"
-            />
+            <input className="w-full border p-2 rounded" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Location" />
           </div>
         </div>
 
@@ -306,9 +247,7 @@ export default function EditPost() {
         <div>
           <label className="block text-sm font-medium mb-1">Replace Image (optional)</label>
           <input type="file" accept="image/*" onChange={handleImageChange} />
-          {imagePreview && (
-            <img src={imagePreview} alt="Preview" className="w-40 h-40 object-cover mt-2 rounded border" />
-          )}
+          {imagePreview && <img src={imagePreview} alt="Preview" className="w-40 h-40 object-cover mt-2 rounded border" />}
 
           <button
             type="button"
