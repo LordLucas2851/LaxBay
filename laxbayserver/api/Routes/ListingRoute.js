@@ -3,47 +3,32 @@ import pool from "./PoolConnection.js";
 
 const router = express.Router();
 
-/**
- * Mounted at /api/store
- * Final paths:
- *   GET /api/store/listings
- *   GET /api/store/listings/:id
- *   GET /api/store/postdetails/:id  (alias for your frontend)
- */
+// list
 router.get("/listings", async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 20, 100);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
-
     const { rows } = await pool.query(
-      `SELECT * FROM public.postings
-       ORDER BY created_at DESC
-       LIMIT $1 OFFSET $2`,
+      `SELECT * FROM public.postings ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
-
     res.json(rows);
   } catch (err) {
-    console.error("Fetch postings error:", err);
+    console.error("Public list error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-router.get(
-  ["/listings/:id", "/postdetails/:id", "/listing/:id"], // ← added /postdetails/:id
-  async (req, res) => {
-    try {
-      const { rows } = await pool.query(
-        `SELECT * FROM public.postings WHERE id = $1`,
-        [req.params.id]
-      );
-      if (rows.length === 0) return res.status(404).json({ error: "Not found" });
-      res.json(rows[0]);
-    } catch (err) {
-      console.error("Fetch posting error:", err);
-      res.status(500).json({ error: "Server error" });
-    }
+// details (your working style)
+router.get(["/listings/:id", "/postdetails/:id", "/listing/:id"], async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM public.postings WHERE id = $1`, [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: "Not found" });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Public details error:", err);
+    res.status(500).json({ error: "Server error" });
   }
-);
+});
 
 export default router;
