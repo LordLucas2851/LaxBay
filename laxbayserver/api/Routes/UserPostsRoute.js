@@ -28,17 +28,17 @@ function extractImageData(req) {
     const b64 = req.file.buffer.toString("base64");
     return `data:${mime};base64,${b64}`;
   }
-  return undefined; // means "do not change"
+  return undefined; // don't change
 }
 
-// GET your own post (EditPost.jsx GET)
+// GET /api/store/user/post(s)/:id
 router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
     if (!username) return;
 
     const { rows } = await pool.query(
-      `SELECT * FROM public.postings WHERE id = $1 AND username = $2`,
+      `SELECT * FROM postings WHERE id = $1 AND username = $2`,
       [req.params.id, username]
     );
     if (rows.length === 0) return res.status(404).json({ error: "Not found" });
@@ -49,24 +49,23 @@ router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   }
 });
 
-// UPDATE your own post (EditPost.jsx PUT — JSON or multipart)
+// PUT /api/store/user/update/:id  or /posts/:id
 router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
     if (!username) return;
 
-    // Ensure ownership
     const { rows: owned } = await pool.query(
-      `SELECT id FROM public.postings WHERE id = $1 AND username = $2`,
+      `SELECT id FROM postings WHERE id = $1 AND username = $2`,
       [req.params.id, username]
     );
     if (owned.length === 0) return res.status(403).json({ error: "Not your post or not found" });
 
     const { title, description, price, category, location } = req.body;
-    const imageValue = extractImageData(req); // data-URL string or undefined
+    const imageValue = extractImageData(req);
 
     const { rows } = await pool.query(
-      `UPDATE public.postings
+      `UPDATE postings
          SET title       = COALESCE($1, title),
              description = COALESCE($2, description),
              price       = COALESCE($3, price),
