@@ -34,12 +34,12 @@ const __dirname = path.dirname(__filename);
 // uploads directory is ../uploads relative to this file
 const UPLOAD_DIR = path.join(__dirname, "../uploads");
 
-// make sure the folder exists
+// make sure the folder exists (ok to keep for legacy images)
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
-// serve files at https://<host>/uploads/<filename>
+// serve files at https://<host>/uploads/<filename> (legacy images)
 app.use("/uploads", express.static(UPLOAD_DIR));
 
 // ---------- CORS ----------
@@ -60,9 +60,9 @@ app.use(
   })
 );
 
-// ---------- Body parsing ----------
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// ---------- Body parsing (bump limits for base64 images) ----------
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
 // ---------- Sessions (Postgres-backed) ----------
 const PgSession = connectPgSimple(session);
@@ -101,9 +101,9 @@ app.use("/api/store/register", registerRouter);
 app.use("/api/store/login", loginRouter);
 app.use("/api/store/create", postingRouter);   // POST /api/store/create/
 app.use("/api/store/user", userPostRouter);    // GET/PUT /api/store/user/posts/:id
-app.use("/api/store/admin", adminRouter);      // GET/DELETE /api/store/admin/listings(/:id)
+app.use("/api/store/admin", adminRouter);      // GET/PUT/DELETE /api/store/admin/(posts|listings|postdetails)/:id
 app.use("/api/store/search", searchRouter);    // GET /api/store/search
-app.use("/api/store", listingRouter);          // GET /api/store/listings(/:id, postdetails/:id)
+app.use("/api/store", listingRouter);          // GET /api/store/(listings|postdetails)/:id
 app.use("/api/user", userRouter);
 
 // Simple greeting
