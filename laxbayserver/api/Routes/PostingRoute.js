@@ -1,19 +1,21 @@
 import express from "express";
 import multer from "multer";
+import path from "path";
 import pool from "./PoolConnection.js";
+import { UPLOAD_DIR } from "../index.js";
 
 const router = express.Router();
 
-const upload = multer({
-  dest: "uploads/",
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "");
+    const name = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, name);
+  },
 });
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB
 
-/**
- * Mounted at /api/store/create
- * Final path:
- *   POST /api/store/create/
- */
 router.post("/", upload.single("image"), async (req, res) => {
   try {
     const username = req.session?.username;
@@ -24,7 +26,8 @@ router.post("/", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "All fields must be provided" });
     }
 
-    const imagePath = req.file ? req.file.path : null;
+    // store a URL-friendly path that your frontend can render directly
+    const imagePath = req.file ? `uploads/${req.file.filename}` : null;
 
     const { rows } = await pool.query(
       `INSERT INTO public.postings
