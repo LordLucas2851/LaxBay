@@ -1,30 +1,31 @@
 import express from "express";
 import multer from "multer";
-import path from "path";
-import { fileURLToPath } from "url";
 import pool from "./PoolConnection.js";
 
 const router = express.Router();
 // TODO: replace with real admin check
 const requireAdmin = (req, _res, next) => next();
 
-// absolute uploads dir: .../api/uploads
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const UPLOAD_DIR = path.join(__dirname, "../uploads");
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "");
-    const name = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    cb(null, name);
-  },
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB
+
+function extractImageData(req) {
+  const data = req.body?.imageData || req.body?.image;
+  if (data && /^data:image\/(png|jpeg|jpg|webp);base64,/.test(String(data))) {
+    return String(data);
+  }
+  if (req.file?.buffer) {
+    const mime = req.file.mimetype || "image/png";
+    const b64 = req.file.buffer.toString("base64");
+    return `data:${mime};base64,${b64}`;
+  }
+  return undefined;
+}
 
 /**
- * Mounted at /api/store/admin in index.js
+ * Mounted at /api/store/admin
  * Supported:
  *   GET    /posts           , /listings
  *   GET    /posts/:id       , /listings/:id       , /postdetails/:id
@@ -60,11 +61,11 @@ router.get(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, as
   }
 });
 
-// Edit (accepts JSON or multipart; image optional)
+// Edit (JSON or multipart)
 router.put(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, upload.single("image"), async (req, res) => {
   try {
-    const { title, description, price, category, location, image } = req.body;
-    const newImage = req.file ? `uploads/${req.file.filename}` : image ?? undefined;
+    const { title, description, price, category, location } = req.body;
+    const imageValue = extractImageData(req);
 
     const { rows } = await pool.query(
       `UPDATE public.postings
@@ -77,7 +78,7 @@ router.put(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, up
              updated_at  = NOW()
        WHERE id = $7
        RETURNING *`,
-      [title, description, price, category, location, newImage, req.params.id]
+      [title, description, price, category, location, imageValue, req.params.id]
     );
 
     if (rows.length === 0) return res.status(404).json({ error: "Not found" });
