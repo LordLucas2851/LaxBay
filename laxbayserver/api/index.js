@@ -39,7 +39,6 @@ const RAW_BASES = [
   ...(process.env.GITHUB_UPLOADS_BASE
     ? process.env.GITHUB_UPLOADS_BASE.split(",").map(s => s.trim()).filter(Boolean)
     : []),
-  // Prioritize your repo layout: laxbayserver/uploads first
   "https://raw.githubusercontent.com/LordLucas2851/LaxBay/main/laxbayserver/uploads",
   "https://raw.githubusercontent.com/LordLucas2851/LaxBay/main/uploads",
 ];
@@ -52,7 +51,7 @@ app.get("/uploads/:file", async (req, res) => {
   const onDisk = path.join(UPLOAD_DIR, fname);
   if (fs.existsSync(onDisk)) return res.sendFile(onDisk);
 
-  // 2) Try each GitHub raw base; log which URLs were attempted
+  // 2) Try GitHub raw bases
   const tried = [];
   for (const base of RAW_BASES) {
     const url = `${base}/${encodeURIComponent(fname)}`;
@@ -76,7 +75,7 @@ app.get("/uploads/:file", async (req, res) => {
   }
 
   console.warn("[uploads:fallback-miss]", fname, "tried:", tried);
-  // 3) Transparent 1x1 PNG placeholder so the UI doesn't show a broken image icon
+  // 3) Transparent 1x1 PNG placeholder
   const png1x1 = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAk8B4O2b2ZcAAAAASUVORK5CYII=",
     "base64"
@@ -85,7 +84,7 @@ app.get("/uploads/:file", async (req, res) => {
   return res.status(200).send(png1x1);
 });
 
-// Also expose local uploads statically (covers dev/local or freshly written legacy files)
+// Also expose local uploads statically
 app.use("/uploads", express.static(UPLOAD_DIR));
 
 // ---------- CORS ----------
@@ -146,6 +145,9 @@ app.get("/api/_debug/uploads-bases", (_req, res) => {
 });
 
 // ---------- API routes ----------
+// Mount chat FIRST so it doesn't get shadowed by the generic /api/store router.
+app.use("/api/store/chat", chatBotRouter);
+
 app.use("/api/store/register", registerRouter);
 app.use("/api/store/login", loginRouter);
 app.use("/api/store/create", postingRouter);
