@@ -1,11 +1,9 @@
-// index.js (for Render deployment)
 import express from "express";
 import cors from "cors";
 import session from "express-session";
 import dotenv from "dotenv";
 import connectPgSimple from "connect-pg-simple";
 
-// Routers
 import registerRouter from "./Routes/RegisterRoute.js";
 import loginRouter from "./Routes/LoginRoute.js";
 import postingRouter from "./Routes/PostingRoute.js";
@@ -19,8 +17,6 @@ import userRouter from "./Routes/UserRoute.js";
 dotenv.config();
 
 const app = express();
-
-// Behind Render/Proxy so cookies marked secure can be set correctly
 app.set("trust proxy", 1);
 
 const allowedOrigins = [
@@ -46,8 +42,6 @@ app.use("/uploads", express.static("uploads"));
 
 const PgSession = connectPgSimple(session);
 
-// Tip: if your Neon DATABASE_URL requires SSL on Render, ensure the env
-// includes `?sslmode=require` or configure a pg Pool with ssl instead.
 app.use(
   session({
     store: new PgSession({
@@ -59,7 +53,7 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // secure only in prod
+      secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 1000 * 60 * 60 * 24 * 7,
     },
@@ -77,16 +71,31 @@ app.use("/api/store/search", searchRouter);
 app.use("/api/store", listingRouter);
 app.use("/api/user", userRouter);
 
-// Healthcheck
 app.get("/api", (req, res) => {
   res.send("Hello from Express Server");
 });
 
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error("Server Error:", err);
-  res.status(500).json({ error: err.message });
+// Debug: list routes
+app.get("/api/_debug/routes", (req, res) => {
+  const routes = [];
+  app._router.stack.forEach((m) => {
+    if (m.route && m.route.path) {
+      routes.push({ path: m.route.path, methods: m.route.methods });
+    } else if (m.name === "router" && m.handle.stack) {
+      m.handle.stack.forEach((h) => {
+        if (h.route) {
+          routes.push({ path: h.route.path, methods: h.route.methods });
+        }
+      });
+    }
+  });
+  res.json(routes);
 });
 
-// ⛔️ Do NOT call app.listen here. server.js will handle it.
+// 404 logger
+app.use((req, res) => {
+  console.log(`[404] ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ error: "Not found" });
+});
+
 export default app;
