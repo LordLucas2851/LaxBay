@@ -3,7 +3,7 @@ import multer from "multer";
 import pool from "./PoolConnection.js";
 
 const router = express.Router();
-// TODO: replace with real admin check
+// TODO: real admin auth
 const requireAdmin = (req, _res, next) => next();
 
 const upload = multer({
@@ -27,19 +27,19 @@ function extractImageData(req) {
 /**
  * Mounted at /api/store/admin
  * Supported:
- *   GET    /posts           , /listings
- *   GET    /posts/:id       , /listings/:id       , /postdetails/:id
- *   PUT    /posts/:id       , /listings/:id       , /postdetails/:id  (JSON or multipart)
- *   DELETE /posts/:id       , /listings/:id       , /postdetails/:id
+ *   GET    /posts , /listings
+ *   GET    /posts/:id , /listings/:id , /postdetails/:id
+ *   PUT    /posts/:id , /listings/:id , /postdetails/:id
+ *   DELETE /posts/:id , /listings/:id , /postdetails/:id
  */
 
-// List
+// list
 router.get(["/posts", "/listings"], requireAdmin, async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
     const { rows } = await pool.query(
-      `SELECT * FROM public.postings ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT * FROM postings ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
     res.json(rows);
@@ -49,10 +49,10 @@ router.get(["/posts", "/listings"], requireAdmin, async (req, res) => {
   }
 });
 
-// Get single (mirror postdetails)
+// get one
 router.get(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query(`SELECT * FROM public.postings WHERE id = $1`, [req.params.id]);
+    const { rows } = await pool.query(`SELECT * FROM postings WHERE id = $1`, [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: "Not found" });
     res.json(rows[0]);
   } catch (err) {
@@ -61,14 +61,14 @@ router.get(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, as
   }
 });
 
-// Edit (JSON or multipart)
+// edit
 router.put(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, upload.single("image"), async (req, res) => {
   try {
     const { title, description, price, category, location } = req.body;
     const imageValue = extractImageData(req);
 
     const { rows } = await pool.query(
-      `UPDATE public.postings
+      `UPDATE postings
          SET title       = COALESCE($1, title),
              description = COALESCE($2, description),
              price       = COALESCE($3, price),
@@ -89,10 +89,10 @@ router.put(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, up
   }
 });
 
-// Delete
+// delete
 router.delete(["/posts/:id", "/listings/:id", "/postdetails/:id"], requireAdmin, async (req, res) => {
   try {
-    const { rowCount } = await pool.query(`DELETE FROM public.postings WHERE id = $1`, [req.params.id]);
+    const { rowCount } = await pool.query(`DELETE FROM postings WHERE id = $1`, [req.params.id]);
     if (rowCount === 0) return res.status(404).json({ error: "Not found" });
     res.status(204).send();
   } catch (err) {
