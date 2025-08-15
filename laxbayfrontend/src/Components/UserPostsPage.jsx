@@ -1,22 +1,22 @@
-// src/Components/UserPostsPage.jsx
+// frontend/src/pages/UserPostPage.jsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
-// Must be set in Vercel: VITE_API_BASE_URL = https://laxbay.onrender.com/api
+// Must be set in Vercel env: VITE_API_BASE_URL = https://laxbay.onrender.com/api
 const API = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 
 // Inline helper: supports DB data-URLs, absolute URLs, and legacy /uploads/*
 const imgSrc = (raw) => {
   if (!raw) return "";
   const s = String(raw).replace(/\\/g, "/");
-  if (/^data:image\//i.test(s)) return s;               // data URL from DB
+  if (/^data:image\//i.test(s)) return s;               // DB data URL (base64)
   if (/^https?:\/\//i.test(s)) return s;                // absolute URL
-  const origin = API.replace(/\/api\/?$/, "");          // backend origin only
+  const origin = API.replace(/\/api\/?$/, "");          // backend origin
   return `${origin}/${s.replace(/^\/+/, "")}`;          // legacy /uploads/*
 };
 
-export default function UserPostsPage() {
+export default function UserPostPage() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errMsg, setErrMsg] = useState("");
@@ -60,7 +60,7 @@ export default function UserPostsPage() {
         <div className="text-gray-600 border rounded p-4">
           You haven’t posted anything yet.
           <button
-            onClick={() => navigate("/create")}
+            onClick={() => navigate("/create-post")}
             className="ml-3 inline-block px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
           >
             Create your first post
@@ -81,6 +81,7 @@ export default function UserPostsPage() {
               <h3 className="font-semibold text-lg">{p.title}</h3>
               <p className="text-sm text-gray-600">{p.location}</p>
               <p className="text-sm mt-2 line-clamp-2">{p.description}</p>
+
               <div className="flex justify-between items-center mt-3">
                 <span className="font-bold">${p.price}</span>
                 <div className="space-x-2">
