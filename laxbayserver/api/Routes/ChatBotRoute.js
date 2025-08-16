@@ -9,6 +9,7 @@ const SITE_ORIGIN = process.env.SITE_ORIGIN || "https://lax-bay.vercel.app";
 const MAX_LISTINGS = Number(process.env.CHAT_MAX_LISTINGS || 12);
 const MAX_DESC_CHARS = Number(process.env.CHAT_DESC_CHARS || 160);
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-004";
+const MAX_RELATED_LINKS = Number(process.env.CHAT_MAX_RELATED || 6); // how many buttons to show
 
 /* ===== Helpers ===== */
 function normBody(body = {}) {
@@ -69,6 +70,7 @@ function termsForKeyword(text) {
     .slice(0, 6);
 }
 
+/** Build the natural-language context the model sees (no numeric IDs shown). */
 function listingsToContext(rows = []) {
   if (!rows.length) return "No matching listings found right now.";
   const lines = rows.map(r => {
@@ -76,16 +78,17 @@ function listingsToContext(rows = []) {
     const loc = r.location ? ` • ${r.location}` : "";
     const cat = r.category ? ` • ${r.category}` : "";
     const desc = snip(r.description || "", MAX_DESC_CHARS);
-    return `• [${r.id}] ${r.title} ${price}${loc}${cat}\n  ${desc}`;
+    return `• ${r.title} ${price}${loc}${cat}\n  ${desc}`;
   });
   return lines.join("\n");
 }
 
+/** System prompt—no longer instructs by ID (titles only). */
 function buildPrompt({ messages = [], prompt = "", system = "" }, listingsContext = "") {
   const lines = [];
   const sysDefault =
     "You are LaxBay's helpful assistant. Be concise, friendly, and accurate. " +
-    "When recommending items, refer to them by id and title only. " +
+    "When recommending items, refer to them by title (no numeric IDs). " +
     "Do NOT include raw URLs in your answer; the app will render buttons for navigation.";
 
   lines.push(`System: ${system || sysDefault}`);
@@ -206,6 +209,7 @@ async function vectorListings(prompt, filters) {
   return rows;
 }
 
+/** Merge + score; higher is better. */
 function mergeResults(keywordRows = [], vectorRows = []) {
   const map = new Map();
   for (const r of keywordRows) map.set(r.id, { ...r, score: 0.5 });
@@ -223,6 +227,15 @@ function mergeResults(keywordRows = [], vectorRows = []) {
   return Array.from(map.values())
     .sort((a, b) => (b.score || 0) - (a.score || 0))
     .slice(0, MAX_LISTINGS);
+}
+
+/** Pick only the most relevant items for the bottom links. */
+function selectRelated(rows, max = MAX_RELATED_LINKS) {
+  // keep top rows with decent confidence; guarantee at least 1 if available
+  const MIN_SCORE = 0.58;
+  const strong = rows.filter(r => (r.score ?? 0) >= MIN_SCORE);
+  const chosen = (strong.length ? strong : rows).slice(0, max);
+  return chosen;
 }
 
 /* ===== Routes ===== */
@@ -248,7 +261,9 @@ router.post("/", async (req, res) => {
     const result = await model.generateContent(text);
     const out = result?.response?.text?.() || "";
 
-    const usedItems = rows.map(r => ({
+    // Only send the most relevant items to the frontend for buttons
+    const related = selectRelated(rows);
+    const usedItems = related.map(r => ({
       id: r.id,
       title: r.title,
       price: r.price,
@@ -288,7 +303,8 @@ router.post("/stream", async (req, res) => {
     const result = await model.generateContent(text);
     const out = result?.response?.text?.() || "";
 
-    const usedItems = rows.map(r => ({
+    const related = selectRelated(rows);
+    const usedItems = related.map(r => ({
       id: r.id,
       title: r.title,
       price: r.price,
