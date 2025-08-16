@@ -10,7 +10,7 @@ const MAX_LISTINGS = Number(process.env.CHAT_MAX_LISTINGS || 12);
 const MAX_DESC_CHARS = Number(process.env.CHAT_DESC_CHARS || 160);
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-004";
 
-/* ===== Small helpers ===== */
+/* ===== Helpers ===== */
 function normBody(body = {}) {
   const prompt = (typeof body.prompt === "string" && body.prompt.trim())
     ? body.prompt.trim()
@@ -26,7 +26,6 @@ function snip(s, n) {
   return one.length <= n ? one : one.slice(0, n - 1) + "…";
 }
 
-// Very simple filter extraction
 function parseFilters(text = "") {
   const t = String(text).toLowerCase();
   let minPrice = null, maxPrice = null;
@@ -52,8 +51,8 @@ function parseFilters(text = "") {
   if (cat) category = cat[2].trim();
 
   return {
-    minPrice: isFinite(minPrice) ? minPrice : null,
-    maxPrice: isFinite(maxPrice) ? maxPrice : null,
+    minPrice: Number.isFinite(minPrice) ? minPrice : null,
+    maxPrice: Number.isFinite(maxPrice) ? maxPrice : null,
     location,
     category
   };
@@ -71,7 +70,6 @@ function termsForKeyword(text) {
 
 function listingsToContext(rows = []) {
   if (!rows.length) return "No matching listings found right now.";
-  // ❌ No raw URLs in the context (so the model doesn’t print links)
   const lines = rows.map(r => {
     const price = (r.price != null && r.price !== "") ? `$${r.price}` : "";
     const loc = r.location ? ` • ${r.location}` : "";
@@ -126,89 +124,74 @@ async function embedText(s) {
   return vec;
 }
 
-/* ===== Retrieval filters ===== */
-
-function filtersToWhere(filters) {
+/* ===== SQL where builder (with index offset) ===== */
+function buildWhere(filters, startIndex = 1, tableAlias = "") {
+  const a = tableAlias ? `${tableAlias}.` : "";
   const parts = [];
   const params = [];
-  if (filters.minPrice != null) { parts.push(`price >= ?`); params.push(filters.minPrice); }
-  if (filters.maxPrice != null) { parts.push(`price <= ?`); params.push(filters.maxPrice); }
-  if (filters.location)         { parts.push(`LOWER(location) LIKE LOWER(?)`); params.push(`%${filters.location}%`); }
-  if (filters.category)         { parts.push(`LOWER(category) LIKE LOWER(?)`); params.push(`%${filters.category}%`); }
+  let i = startIndex;
 
-  return { whereParts: parts, params };
+  if (filters.minPrice != null) { parts.push(`${a}price >= $${i++}`); params.push(filters.minPrice); }
+  if (filters.maxPrice != null) { parts.push(`${a}price <= $${i++}`); params.push(filters.maxPrice); }
+  if (filters.location)         { parts.push(`LOWER(${a}location) LIKE LOWER($${i++})`); params.push(`%${filters.location}%`); }
+  if (filters.category)         { parts.push(`LOWER(${a}category) LIKE LOWER($${i++})`); params.push(`%${filters.category}%`); }
+
+  return { whereSql: parts.length ? `WHERE ${parts.join(" AND ")}` : "", params, nextIndex: i };
 }
 
 /* ===== Retrieval queries ===== */
-
 async function keywordListings(prompt, filters) {
   const terms = termsForKeyword(prompt);
-  const { whereParts, params } = filtersToWhere(filters);
 
+  // 1) Build filter WHERE ($1..$N)
+  const { whereSql, params, nextIndex } = buildWhere(filters, 1, "p");
+
+  // 2) Append term clauses continuing the index
   const likeClauses = [];
-  for (const _ of terms) {
-    likeClauses.push(`(title ILIKE ? OR description ILIKE ?)`);
-    // Push twice per term; we’ll substitute later
-  }
-
-  // Build SQL with positional placeholders we’ll convert to $1..$N
-  let baseWhere = whereParts.join(" AND ");
-  if (likeClauses.length) {
-    baseWhere = baseWhere ? `${baseWhere} AND ${likeClauses.join(" AND ")}` : likeClauses.join(" AND ");
-  }
-  const whereSql = baseWhere ? `WHERE ${baseWhere}` : "";
-
-  // Params: filters first, then term patterns (two per term)
-  const allParams = [...params];
+  let i = nextIndex;
   for (const t of terms) {
-    const pat = `%${t}%`;
-    allParams.push(pat, pat);
+    likeClauses.push(`(p.title ILIKE $${i} OR p.description ILIKE $${i})`);
+    params.push(`%${t}%`);
+    i++;
   }
-  allParams.push(MAX_LISTINGS);
 
-  // Convert ? placeholders to $1..$N
-  let idx = 0;
+  const whereCombined =
+    whereSql
+      ? (likeClauses.length ? `${whereSql} AND ${likeClauses.join(" AND ")}` : whereSql)
+      : (likeClauses.length ? `WHERE ${likeClauses.join(" AND ")}` : "");
+
+  // 3) LIMIT placeholder
+  const limitIndex = params.length + 1;
+  params.push(MAX_LISTINGS);
+
   const sql = `
-    SELECT id, title, description, price, category, location
-      FROM postings
-      ${whereSql}
-     ORDER BY id DESC
-     LIMIT ?
-  `.replace(/\?/g, () => `$${++idx}`);
-
-  const { rows } = await pool.query(sql, allParams);
+    SELECT p.id, p.title, p.description, p.price, p.category, p.location
+      FROM postings p
+      ${whereCombined}
+     ORDER BY p.id DESC
+     LIMIT $${limitIndex};
+  `;
+  const { rows } = await pool.query(sql, params);
   return rows;
 }
 
 async function vectorListings(prompt, filters) {
-  // 1) Get embedding as numbers
   let vec;
   try {
-    vec = await embedText(prompt); // array of numbers
+    vec = await embedText(prompt);
   } catch {
     return [];
   }
 
-  // 2) First param is the vector literal string, cast as ::vector in SQL
-  const vecLiteral = `[${vec.join(",")}]`; // pgvector literal: [n1,n2,...]
-  const args = [vecLiteral]; // $1
+  // $1 is always the vector
+  const vecLiteral = `[${vec.join(",")}]`;
+  const args = [vecLiteral];
 
-  // 3) Build WHERE with placeholders that start AFTER $1
-  const { whereParts, params: filterParams } = filtersToWhere(filters);
-  let where = "";
-  if (whereParts.length) {
-    // Convert the generic ? placeholders to $2..$N
-    let next = 2;
-    const parts = whereParts.map(() => `$${next++}`);
-    // Rebuild the WHERE with original expressions mapped to those placeholders
-    // We need to rebuild each clause in order, substituting the right placeholder.
-    next = 2;
-    const rebuilt = whereParts.map(expr => expr.replace("?", `$${next++}`));
-    where = "WHERE " + rebuilt.join(" AND ");
-    args.push(...filterParams); // these occupy $2..$N
-  }
+  // Filters start at $2 and qualify columns with alias p
+  const { whereSql, params } = buildWhere(filters, 2, "p");
+  args.push(...params);
 
-  // 4) LIMIT placeholder comes last
+  // LIMIT is last
   const limitIndex = args.length + 1;
   args.push(MAX_LISTINGS);
 
@@ -217,26 +200,23 @@ async function vectorListings(prompt, filters) {
            1 - (pe.embedding <=> $1::vector) AS similarity
       FROM posting_embeddings pe
       JOIN postings p ON p.id = pe.posting_id
-      ${where}
+      ${whereSql}
      ORDER BY pe.embedding <=> $1::vector ASC
      LIMIT $${limitIndex};
   `;
-
   const { rows } = await pool.query(sql, args);
   return rows;
 }
 
 function mergeResults(keywordRows = [], vectorRows = []) {
   const map = new Map();
-  for (const r of keywordRows) {
-    map.set(r.id, { ...r, score: 0.5 });
-  }
+  for (const r of keywordRows) map.set(r.id, { ...r, score: 0.5 });
+
   for (const r of vectorRows) {
     const prev = map.get(r.id);
     const vs = typeof r.similarity === "number" ? r.similarity : 0.0;
     if (prev) {
       prev.score = Math.max(prev.score, 0.5 + vs * 0.5);
-      map.set(r.id, prev);
     } else {
       map.set(r.id, { ...r, score: 0.5 + vs * 0.5 });
     }
@@ -247,13 +227,10 @@ function mergeResults(keywordRows = [], vectorRows = []) {
 }
 
 /* ===== Routes ===== */
-
-// Health
 router.get("/", (_req, res) => {
   res.json({ ok: true, model: process.env.GEMINI_MODEL || "gemini-1.5-flash" });
 });
 
-// Non-stream
 router.post("/", async (req, res) => {
   try {
     const body = normBody(req.body);
@@ -263,6 +240,7 @@ router.post("/", async (req, res) => {
       keywordListings(body.prompt, filters),
       vectorListings(body.prompt, filters),
     ]);
+
     const rows = mergeResults(kw, vec);
     const context = listingsToContext(rows);
     const text = buildPrompt(body, context);
@@ -276,7 +254,7 @@ router.post("/", async (req, res) => {
       title: r.title,
       price: r.price,
       location: r.location,
-      url: `${SITE_ORIGIN}/postdetails/${r.id}`, // UI will render a button for this
+      url: `${SITE_ORIGIN}/postdetails/${r.id}`,
     }));
 
     res.json({ text: out, usedItems, filters });
@@ -286,7 +264,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Streaming SSE (one payload + done)
 router.post("/stream", async (req, res) => {
   res.set({
     "Cache-Control": "no-cache, no-transform",
@@ -303,6 +280,7 @@ router.post("/stream", async (req, res) => {
       keywordListings(body.prompt, filters),
       vectorListings(body.prompt, filters),
     ]);
+
     const rows = mergeResults(kw, vec);
     const context = listingsToContext(rows);
     const text = buildPrompt(body, context);
