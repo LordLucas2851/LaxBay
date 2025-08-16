@@ -27,6 +27,46 @@ function snip(s, n) {
   return one.length <= n ? one : one.slice(0, n - 1) + "…";
 }
 
+/* ---------- Simple intent detector ---------- */
+/* Return true only if the user is asking to browse/find/recommend listings. */
+function isListingIntent(prompt = "") {
+  const p = String(prompt).toLowerCase();
+  if (!p) return false;
+
+  // Strong shopping verbs/intents
+  const verbs = [
+    "find", "show", "search", "browse", "recommend", "suggest",
+    "looking for", "look for", "see options", "any deals", "what do you have",
+    "under $", "under$", "between", "priced at", "cost", "price", "on sale"
+  ];
+
+  // Marketplace nouns that usually imply browsing
+  const nouns = [
+    "listing", "listings", "item", "items", "gear", "equipment", "stick", "helmet",
+    "gloves", "pads", "cleats", "head", "shaft", "mesh", "stringing", "apparel"
+  ];
+
+  // Action patterns
+  const patterns = [
+    /\b(in|near)\s+[a-z\s]+/i,         // "in greenwood", "near atlanta"
+    /\b\d+\s*-\s*\d+\b/,               // "100-200"
+    /\bunder\s+\d+\b/i,                // "under 100"
+    /\bover\s+\d+\b/i,                 // "over 50"
+    /\bbetween\s+\d+\s+(and|-)\s+\d+\b/i
+  ];
+
+  if (verbs.some(v => p.includes(v))) return true;
+  if (nouns.some(n => p.includes(n))) return true;
+  if (patterns.some(rx => rx.test(p))) return true;
+
+  // Negative intents (help/how-to/admin/app issues)
+  const negatives = ["how do i", "how to", "help me", "make a post", "create a post", "post not working", "bug", "error", "login", "signup", "register", "upload", "image won’t", "image won't", "why is my"];
+  if (negatives.some(n => p.includes(n))) return false;
+
+  return false;
+}
+
+/* ---------- Filters & text processing ---------- */
 function parseFilters(text = "") {
   const t = String(text).toLowerCase();
   let minPrice = null, maxPrice = null;
@@ -47,7 +87,7 @@ function parseFilters(text = "") {
   const loc = t.match(/\bin\s+([a-z\s]+?)(?:[.,;]|$)/);
   if (loc) location = loc[1].trim();
 
-  // Explicit “category …” capture (still supported)
+  // Explicit “category …”
   let category = null;
   const cat = t.match(/\bcategory\s+(?:is\s+)?([a-z\s]+)/);
   if (cat) category = cat[1].trim();
@@ -70,7 +110,7 @@ function termsForKeyword(text) {
     .slice(0, 6);
 }
 
-/** Build the natural-language context the model sees (no numeric IDs shown). */
+/** Natural-language context the model sees (no numeric IDs). */
 function listingsToContext(rows = []) {
   if (!rows.length) return "No matching listings found right now.";
   const lines = rows.map(r => {
@@ -128,7 +168,7 @@ async function embedText(s) {
   return vec;
 }
 
-/* ===== Category resolution (match prompt to your DB categories) ===== */
+/* ===== Category resolution against DB ===== */
 let CAT_CACHE = { values: [], ts: 0 };
 const CAT_TTL_MS = 60_000;
 
@@ -157,7 +197,6 @@ async function resolveCategoryFromPrompt(prompt) {
   if (!p) return null;
   const cats = await getKnownCategories();
 
-  // 1) Exact phrase match
   for (const c of cats) {
     const cNorm = normalize(c);
     if (!cNorm) continue;
@@ -165,7 +204,6 @@ async function resolveCategoryFromPrompt(prompt) {
     if (pattern.test(p)) return c;
   }
 
-  // 2) Token overlap (singularized), e.g., "helmets" -> "helmet"
   const pTokens = new Set(p.split(" ").map(singularize));
   for (const c of cats) {
     const cTokens = normalize(c).split(" ").map(singularize);
@@ -235,6 +273,7 @@ async function vectorListings(prompt, filters) {
   if (filters.category)         { parts.push(`LOWER(p.category) LIKE LOWER($${i++})`); args.push(`%${filters.category}%`); }
 
   const where = parts.length ? `WHERE ${parts.join(" AND ")}` : "";
+
   const limitIndex = args.length + 1;
   args.push(MAX_LISTINGS);
 
@@ -291,39 +330,53 @@ router.get("/", (_req, res) => {
 router.post("/", async (req, res) => {
   try {
     const body = normBody(req.body);
+    const listingIntent = isListingIntent(body.prompt);
+
+    // Build filters and (optionally) infer category
     const filters = parseFilters(body.prompt);
-    // Auto-resolve category from prompt against your DB categories (if not explicitly provided)
-    filters.category = filters.category || await resolveCategoryFromPrompt(body.prompt);
+    if (listingIntent) {
+      filters.category = filters.category || await resolveCategoryFromPrompt(body.prompt);
+    } else {
+      // If not a listing query, don't force category/location/price filters at all
+      filters.minPrice = filters.maxPrice = null;
+      filters.location = filters.category = null;
+    }
 
-    const [kw, vec] = await Promise.all([
-      keywordListings(body.prompt, filters),
-      vectorListings(body.prompt, filters),
-    ]);
+    // Run searches only if it's a listing intent; otherwise skip to text generation
+    let rows = [];
+    if (listingIntent) {
+      const [kw, vec] = await Promise.all([
+        keywordListings(body.prompt, filters),
+        vectorListings(body.prompt, filters),
+      ]);
+      rows = mergeResults(kw, vec);
 
-    const rows = mergeResults(kw, vec);
+      // If a category was inferred or specified, gate by it
+      if (filters.category) {
+        rows = rows.filter(r => (r.category || "").toLowerCase().includes(filters.category.toLowerCase()));
+      }
+    }
 
-    // Gate results to requested category for both chat context and related links
-    const gatedRows = filters.category
-      ? rows.filter(r => (r.category || "").toLowerCase().includes(filters.category.toLowerCase()))
-      : rows;
-
-    const context = listingsToContext(gatedRows);
+    // Build context only for listing intent; otherwise no listing context
+    const context = listingIntent ? listingsToContext(rows) : "";
     const text = buildPrompt(body, context);
 
     const model = getTextModel();
     const result = await model.generateContent(text);
     const out = result?.response?.text?.() || "";
 
-    const related = selectRelated(gatedRows);
-    const usedItems = related.map(r => ({
-      id: r.id,
-      title: r.title,
-      price: r.price,
-      location: r.location,
-      url: `${SITE_ORIGIN}/postdetails/${r.id}`,
-    }));
+    // Only provide related links if user was asking about listings
+    const usedItems = listingIntent
+      ? selectRelated(rows).map(r => ({
+          id: r.id,
+          title: r.title,
+          price: r.price,
+          location: r.location,
+          url: `${SITE_ORIGIN}/postdetails/${r.id}`,
+        }))
+      : [];
 
-    res.json({ text: out, usedItems, filters });
+    res.json({ text: out, usedItems, filters, listingIntent });
   } catch (err) {
     console.error("chat error:", err);
     res.status(500).json({ error: "chat error", detail: err.message });
@@ -340,36 +393,46 @@ router.post("/stream", async (req, res) => {
 
   try {
     const body = normBody(req.body);
+    const listingIntent = isListingIntent(body.prompt);
+
     const filters = parseFilters(body.prompt);
-    filters.category = filters.category || await resolveCategoryFromPrompt(body.prompt);
+    if (listingIntent) {
+      filters.category = filters.category || await resolveCategoryFromPrompt(body.prompt);
+    } else {
+      filters.minPrice = filters.maxPrice = null;
+      filters.location = filters.category = null;
+    }
 
-    const [kw, vec] = await Promise.all([
-      keywordListings(body.prompt, filters),
-      vectorListings(body.prompt, filters),
-    ]);
+    let rows = [];
+    if (listingIntent) {
+      const [kw, vec] = await Promise.all([
+        keywordListings(body.prompt, filters),
+        vectorListings(body.prompt, filters),
+      ]);
+      rows = mergeResults(kw, vec);
+      if (filters.category) {
+        rows = rows.filter(r => (r.category || "").toLowerCase().includes(filters.category.toLowerCase()));
+      }
+    }
 
-    const rows = mergeResults(kw, vec);
-    const gatedRows = filters.category
-      ? rows.filter(r => (r.category || "").toLowerCase().includes(filters.category.toLowerCase()))
-      : rows;
-
-    const context = listingsToContext(gatedRows);
+    const context = listingIntent ? listingsToContext(rows) : "";
     const text = buildPrompt(body, context);
 
     const model = getTextModel();
     const result = await model.generateContent(text);
     const out = result?.response?.text?.() || "";
 
-    const related = selectRelated(gatedRows);
-    const usedItems = related.map(r => ({
-      id: r.id,
-      title: r.title,
-      price: r.price,
-      location: r.location,
-      url: `${SITE_ORIGIN}/postdetails/${r.id}`,
-    }));
+    const usedItems = listingIntent
+      ? selectRelated(rows).map(r => ({
+          id: r.id,
+          title: r.title,
+          price: r.price,
+          location: r.location,
+          url: `${SITE_ORIGIN}/postdetails/${r.id}`,
+        }))
+      : [];
 
-    res.write(`data: ${JSON.stringify({ text: out, usedItems, filters })}\n\n`);
+    res.write(`data: ${JSON.stringify({ text: out, usedItems, filters, listingIntent })}\n\n`);
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
   } catch (err) {
