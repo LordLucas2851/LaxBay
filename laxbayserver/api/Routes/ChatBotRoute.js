@@ -9,7 +9,7 @@ const SITE_ORIGIN = process.env.SITE_ORIGIN || "https://lax-bay.vercel.app";
 const MAX_LISTINGS = Number(process.env.CHAT_MAX_LISTINGS || 12);
 const MAX_DESC_CHARS = Number(process.env.CHAT_DESC_CHARS || 160);
 const EMBED_MODEL = process.env.EMBED_MODEL || "text-embedding-004";
-const MAX_RELATED_LINKS = Number(process.env.CHAT_MAX_RELATED || 6); // how many buttons to show
+const MAX_RELATED_LINKS = Number(process.env.CHAT_MAX_RELATED || 6);
 
 /* ===== Helpers ===== */
 function normBody(body = {}) {
@@ -47,7 +47,7 @@ function parseFilters(text = "") {
   const loc = t.match(/\bin\s+([a-z\s]+?)(?:[.,;]|$)/);
   if (loc) location = loc[1].trim();
 
-  // Only capture category when explicitly stated as "category ..."
+  // Explicit “category …” capture (still supported)
   let category = null;
   const cat = t.match(/\bcategory\s+(?:is\s+)?([a-z\s]+)/);
   if (cat) category = cat[1].trim();
@@ -83,7 +83,7 @@ function listingsToContext(rows = []) {
   return lines.join("\n");
 }
 
-/** System prompt—no longer instructs by ID (titles only). */
+/** System prompt—titles only (no IDs), no raw URLs. */
 function buildPrompt({ messages = [], prompt = "", system = "" }, listingsContext = "") {
   const lines = [];
   const sysDefault =
@@ -126,6 +126,53 @@ async function embedText(s) {
     throw new Error("Embedding failed");
   }
   return vec;
+}
+
+/* ===== Category resolution (match prompt to your DB categories) ===== */
+let CAT_CACHE = { values: [], ts: 0 };
+const CAT_TTL_MS = 60_000;
+
+function normalize(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function singularize(w) {
+  return w.endsWith("s") ? w.slice(0, -1) : w;
+}
+
+async function getKnownCategories() {
+  const now = Date.now();
+  if (now - (CAT_CACHE.ts || 0) < CAT_TTL_MS && CAT_CACHE.values.length) return CAT_CACHE.values;
+  const { rows } = await pool.query(`
+    SELECT DISTINCT LOWER(TRIM(category)) AS cat
+      FROM postings
+     WHERE category IS NOT NULL AND TRIM(category) <> ''
+  `);
+  const cats = rows.map(r => r.cat).filter(Boolean);
+  CAT_CACHE = { values: cats, ts: now };
+  return cats;
+}
+
+async function resolveCategoryFromPrompt(prompt) {
+  const p = normalize(prompt);
+  if (!p) return null;
+  const cats = await getKnownCategories();
+
+  // 1) Exact phrase match
+  for (const c of cats) {
+    const cNorm = normalize(c);
+    if (!cNorm) continue;
+    const pattern = new RegExp(`\\b${cNorm.replace(/\s+/g, "\\s+")}\\b`, "i");
+    if (pattern.test(p)) return c;
+  }
+
+  // 2) Token overlap (singularized), e.g., "helmets" -> "helmet"
+  const pTokens = new Set(p.split(" ").map(singularize));
+  for (const c of cats) {
+    const cTokens = normalize(c).split(" ").map(singularize);
+    if (cTokens.some(t => pTokens.has(t))) return c;
+  }
+
+  return null;
 }
 
 /* ===== Retrieval: keyword (OR terms) ===== */
@@ -188,7 +235,6 @@ async function vectorListings(prompt, filters) {
   if (filters.category)         { parts.push(`LOWER(p.category) LIKE LOWER($${i++})`); args.push(`%${filters.category}%`); }
 
   const where = parts.length ? `WHERE ${parts.join(" AND ")}` : "";
-
   const limitIndex = args.length + 1;
   args.push(MAX_LISTINGS);
 
@@ -231,7 +277,6 @@ function mergeResults(keywordRows = [], vectorRows = []) {
 
 /** Pick only the most relevant items for the bottom links. */
 function selectRelated(rows, max = MAX_RELATED_LINKS) {
-  // keep top rows with decent confidence; guarantee at least 1 if available
   const MIN_SCORE = 0.58;
   const strong = rows.filter(r => (r.score ?? 0) >= MIN_SCORE);
   const chosen = (strong.length ? strong : rows).slice(0, max);
@@ -247,6 +292,8 @@ router.post("/", async (req, res) => {
   try {
     const body = normBody(req.body);
     const filters = parseFilters(body.prompt);
+    // Auto-resolve category from prompt against your DB categories (if not explicitly provided)
+    filters.category = filters.category || await resolveCategoryFromPrompt(body.prompt);
 
     const [kw, vec] = await Promise.all([
       keywordListings(body.prompt, filters),
@@ -254,15 +301,20 @@ router.post("/", async (req, res) => {
     ]);
 
     const rows = mergeResults(kw, vec);
-    const context = listingsToContext(rows);
+
+    // Gate results to requested category for both chat context and related links
+    const gatedRows = filters.category
+      ? rows.filter(r => (r.category || "").toLowerCase().includes(filters.category.toLowerCase()))
+      : rows;
+
+    const context = listingsToContext(gatedRows);
     const text = buildPrompt(body, context);
 
     const model = getTextModel();
     const result = await model.generateContent(text);
     const out = result?.response?.text?.() || "";
 
-    // Only send the most relevant items to the frontend for buttons
-    const related = selectRelated(rows);
+    const related = selectRelated(gatedRows);
     const usedItems = related.map(r => ({
       id: r.id,
       title: r.title,
@@ -289,6 +341,7 @@ router.post("/stream", async (req, res) => {
   try {
     const body = normBody(req.body);
     const filters = parseFilters(body.prompt);
+    filters.category = filters.category || await resolveCategoryFromPrompt(body.prompt);
 
     const [kw, vec] = await Promise.all([
       keywordListings(body.prompt, filters),
@@ -296,14 +349,18 @@ router.post("/stream", async (req, res) => {
     ]);
 
     const rows = mergeResults(kw, vec);
-    const context = listingsToContext(rows);
+    const gatedRows = filters.category
+      ? rows.filter(r => (r.category || "").toLowerCase().includes(filters.category.toLowerCase()))
+      : rows;
+
+    const context = listingsToContext(gatedRows);
     const text = buildPrompt(body, context);
 
     const model = getTextModel();
     const result = await model.generateContent(text);
     const out = result?.response?.text?.() || "";
 
-    const related = selectRelated(rows);
+    const related = selectRelated(gatedRows);
     const usedItems = related.map(r => ({
       id: r.id,
       title: r.title,
