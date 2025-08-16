@@ -3,8 +3,8 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { DataContext } from "../App";
 
-// ✅ Use the correct environment variable name
-const API = import.meta.env.VITE_API_BASE_URL;
+// Normalize API base (no trailing slash)
+const API = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -15,7 +15,8 @@ export default function Login() {
   async function handleLogin(e) {
     e.preventDefault();
 
-    if (!email || !password) {
+    const emailNorm = String(email).trim().toLowerCase();
+    if (!emailNorm || !password) {
       alert("Please fill in all fields");
       return;
     }
@@ -23,23 +24,25 @@ export default function Login() {
     try {
       const response = await axios.post(
         `${API}/store/login`,
-        { email, password },
+        { email: emailNorm, password },
         {
           headers: { "Content-Type": "application/json" },
           withCredentials: true,
         }
       );
 
+      // Persist lightweight session info for UI
       sessionStorage.setItem("logged", "true");
-      sessionStorage.setItem("city", response.data.user.city);
-      sessionStorage.setItem("role", response.data.user.role);
+      sessionStorage.setItem("city", response.data.user.city || "");
+      sessionStorage.setItem("role", response.data.user.role || "user");
 
       setLogStatus(true);
       alert("Login successful!");
       navigate("/");
     } catch (error) {
-      console.error("Error:", error);
-      alert(error.response?.data?.error || "Login failed. Please try again.");
+      const msg = error?.response?.data?.error || error.message || "Login failed. Please try again.";
+      console.error("Login failed:", error?.response?.data || error);
+      alert(msg);
     }
   }
 
@@ -55,6 +58,7 @@ export default function Login() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full px-4 py-2 border rounded-lg"
+              autoComplete="email"
             />
           </div>
           <div>
@@ -64,6 +68,7 @@ export default function Login() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-2 border rounded-lg"
+              autoComplete="current-password"
             />
           </div>
           <button type="submit" className="w-full py-2 bg-blue-600 text-white rounded-lg">
