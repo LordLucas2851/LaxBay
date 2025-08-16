@@ -1,4 +1,3 @@
-// api/Routes/ChatBotRoute.js
 import express from "express";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import pool from "./PoolConnection.js";
@@ -121,76 +120,108 @@ async function embedText(s) {
   const model = genAI.getGenerativeModel({ model: EMBED_MODEL });
   const result = await model.embedContent(s);
   const vec = result?.embedding?.values;
-  if (!vec || !Array.isArray(vec)) throw new Error("Embedding failed");
+  if (!Array.isArray(vec) || !vec.every(n => Number.isFinite(n))) {
+    throw new Error("Embedding failed");
+  }
   return vec;
 }
 
-/* ===== Embedding maintenance ===== */
-
-function postingToEmbedDoc(p) {
-  return [
-    p.title || "",
-    p.category ? `Category: ${p.category}` : "",
-    p.location ? `Location: ${p.location}` : "",
-    p.description || ""
-  ].filter(Boolean).join("\n");
-}
-
-/* ===== Retrieval pieces ===== */
+/* ===== Retrieval filters ===== */
 
 function filtersToWhere(filters) {
   const parts = [];
   const params = [];
-  let i = 1;
+  if (filters.minPrice != null) { parts.push(`price >= ?`); params.push(filters.minPrice); }
+  if (filters.maxPrice != null) { parts.push(`price <= ?`); params.push(filters.maxPrice); }
+  if (filters.location)         { parts.push(`LOWER(location) LIKE LOWER(?)`); params.push(`%${filters.location}%`); }
+  if (filters.category)         { parts.push(`LOWER(category) LIKE LOWER(?)`); params.push(`%${filters.category}%`); }
 
-  if (filters.minPrice != null) { parts.push(`price >= $${i++}`); params.push(filters.minPrice); }
-  if (filters.maxPrice != null) { parts.push(`price <= $${i++}`); params.push(filters.maxPrice); }
-  if (filters.location) { parts.push(`LOWER(location) LIKE LOWER($${i++})`); params.push(`%${filters.location}%`); }
-  if (filters.category) { parts.push(`LOWER(category) LIKE LOWER($${i++})`); params.push(`%${filters.category}%`); }
-
-  return { where: parts.length ? `WHERE ${parts.join(" AND ")}` : "", params };
+  return { whereParts: parts, params };
 }
+
+/* ===== Retrieval queries ===== */
 
 async function keywordListings(prompt, filters) {
   const terms = termsForKeyword(prompt);
-  const { where, params } = filtersToWhere(filters);
-  let sql = `SELECT id, title, description, price, category, location FROM postings`;
+  const { whereParts, params } = filtersToWhere(filters);
+
   const likeClauses = [];
-
-  let i = params.length + 1;
-  for (const t of terms) {
-    likeClauses.push(`(title ILIKE $${i} OR description ILIKE $${i})`);
-    params.push(`%${t}%`);
-    i++;
+  for (const _ of terms) {
+    likeClauses.push(`(title ILIKE ? OR description ILIKE ?)`);
+    // Push twice per term; we’ll substitute later
   }
-  const filterAndLike =
-    (where ? where + (likeClauses.length ? " AND " : "") : (likeClauses.length ? "WHERE " : "")) +
-    likeClauses.join(" AND ");
 
-  sql += ` ${filterAndLike} ORDER BY id DESC LIMIT $${i}`;
-  params.push(MAX_LISTINGS);
-  const { rows } = await pool.query(sql, params);
+  // Build SQL with positional placeholders we’ll convert to $1..$N
+  let baseWhere = whereParts.join(" AND ");
+  if (likeClauses.length) {
+    baseWhere = baseWhere ? `${baseWhere} AND ${likeClauses.join(" AND ")}` : likeClauses.join(" AND ");
+  }
+  const whereSql = baseWhere ? `WHERE ${baseWhere}` : "";
+
+  // Params: filters first, then term patterns (two per term)
+  const allParams = [...params];
+  for (const t of terms) {
+    const pat = `%${t}%`;
+    allParams.push(pat, pat);
+  }
+  allParams.push(MAX_LISTINGS);
+
+  // Convert ? placeholders to $1..$N
+  let idx = 0;
+  const sql = `
+    SELECT id, title, description, price, category, location
+      FROM postings
+      ${whereSql}
+     ORDER BY id DESC
+     LIMIT ?
+  `.replace(/\?/g, () => `$${++idx}`);
+
+  const { rows } = await pool.query(sql, allParams);
   return rows;
 }
 
 async function vectorListings(prompt, filters) {
+  // 1) Get embedding as numbers
   let vec;
   try {
-    vec = await embedText(prompt);
+    vec = await embedText(prompt); // array of numbers
   } catch {
     return [];
   }
-  const { where, params } = filtersToWhere(filters);
+
+  // 2) First param is the vector literal string, cast as ::vector in SQL
+  const vecLiteral = `[${vec.join(",")}]`; // pgvector literal: [n1,n2,...]
+  const args = [vecLiteral]; // $1
+
+  // 3) Build WHERE with placeholders that start AFTER $1
+  const { whereParts, params: filterParams } = filtersToWhere(filters);
+  let where = "";
+  if (whereParts.length) {
+    // Convert the generic ? placeholders to $2..$N
+    let next = 2;
+    const parts = whereParts.map(() => `$${next++}`);
+    // Rebuild the WHERE with original expressions mapped to those placeholders
+    // We need to rebuild each clause in order, substituting the right placeholder.
+    next = 2;
+    const rebuilt = whereParts.map(expr => expr.replace("?", `$${next++}`));
+    where = "WHERE " + rebuilt.join(" AND ");
+    args.push(...filterParams); // these occupy $2..$N
+  }
+
+  // 4) LIMIT placeholder comes last
+  const limitIndex = args.length + 1;
+  args.push(MAX_LISTINGS);
+
   const sql = `
     SELECT p.id, p.title, p.description, p.price, p.category, p.location,
-           1 - (pe.embedding <=> $1) AS similarity
+           1 - (pe.embedding <=> $1::vector) AS similarity
       FROM posting_embeddings pe
       JOIN postings p ON p.id = pe.posting_id
       ${where}
-     ORDER BY pe.embedding <=> $1 ASC
-     LIMIT $2
+     ORDER BY pe.embedding <=> $1::vector ASC
+     LIMIT $${limitIndex};
   `;
-  const args = [vec, MAX_LISTINGS, ...params];
+
   const { rows } = await pool.query(sql, args);
   return rows;
 }
