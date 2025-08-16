@@ -1,47 +1,33 @@
+// api/Routes/LoginRoute.js
 import express from "express";
+import bcrypt from "bcrypt";
 import pool from "./PoolConnection.js";
 
 const loginRouter = express.Router();
 
-// 🧪 Test route to confirm backend connectivity
-loginRouter.get("/ping", (req, res) => {
-  console.log("Ping test received at /api/store/login/ping");
-  res.send("Login route is active");
-});
-
-// 🔐 Main login route
 loginRouter.post("/", async (req, res) => {
-  console.log("==> LOGIN route hit");
-  console.log("Request body:", req.body);
-
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ error: "Please fill in all fields" });
-  }
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: "Please fill in all fields" });
 
   try {
-    const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
-      [email]
+    const { rows } = await pool.query(
+      "SELECT * FROM users WHERE lower(email) = lower($1)",
+      [String(email).trim().toLowerCase()]
     );
+    if (!rows.length) return res.status(400).json({ error: "Invalid email or password" });
+    const user = rows[0];
 
-    if (result.rows.length === 0) {
-      console.log("❌ Email not found:", email);
-      return res.status(400).json({ error: "Invalid email or password" });
-    }
+    const ok = user.password_hash
+      ? await bcrypt.compare(password, user.password_hash)
+      : (user.password && user.password === password); // TEMP compatibility
 
-    const user = result.rows[0];
+    if (!ok) return res.status(400).json({ error: "Invalid email or password" });
 
-    if (user.password !== password) {
-      console.log("❌ Password mismatch for email:", email);
-      return res.status(400).json({ error: "Invalid email or password" });
-    }
-
-    // Session handling
+    // minimal session
+    req.session.userId = user.id;
     req.session.username = user.username;
+    req.session.role = user.role || "user";
 
-    console.log("✅ Login successful for:", email);
     res.status(200).json({
       message: "Login successful",
       user: {
@@ -52,7 +38,7 @@ loginRouter.post("/", async (req, res) => {
         username: user.username,
         city: user.city,
         zipCode: user.zip_code,
-        role: user.role
+        role: req.session.role
       },
     });
   } catch (error) {
