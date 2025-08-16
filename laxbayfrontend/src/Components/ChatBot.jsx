@@ -1,4 +1,3 @@
-// frontend/src/Components/ChatBot.jsx
 import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -153,7 +152,7 @@ export default function ChatBot() {
             {suggestions.map((it) => (
               <button
                 key={it.id}
-                onClick={() => navigate(`/postdetals/${it.id}`)}
+                onClick={() => navigate(`/postdetails/${it.id}`)} {/* fixed typo */}
                 className="w-full text-left p-3 rounded border hover:shadow bg-white"
                 title={it.title}
               >
@@ -166,7 +165,4 @@ export default function ChatBot() {
             ))}
           </div>
         </div>
-      )}
-    </div>
-  );
-}
+      )
