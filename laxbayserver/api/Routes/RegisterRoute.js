@@ -1,17 +1,20 @@
-// api/Routes/RegisterRoute.js
 import express from "express";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";   // swapped from bcrypt → bcryptjs
 import pool from "./PoolConnection.js";
 
 const registerRouter = express.Router();
 
-function cleanEmail(e=""){ return e.trim().toLowerCase(); }
-function cleanUsername(u=""){ return u.trim(); }
+function cleanEmail(e = "") {
+  return e.trim().toLowerCase();
+}
+function cleanUsername(u = "") {
+  return u.trim();
+}
 
 registerRouter.post("/", async (req, res) => {
   const { firstName, lastName, email, username, password, address, city, zipCode } = req.body || {};
 
-  // basic validation
+  // Required fields
   if (![firstName, lastName, email, username, password, address, city, zipCode].every(Boolean)) {
     return res.status(400).json({ error: "All fields are required." });
   }
@@ -23,15 +26,19 @@ registerRouter.post("/", async (req, res) => {
   const u = cleanUsername(username);
 
   try {
-    // check collisions case-insensitively
+    // Ensure unique email/username
     const dupe = await pool.query(
       "SELECT 1 FROM users WHERE lower(email)=lower($1) OR lower(username)=lower($2) LIMIT 1",
       [e, u]
     );
-    if (dupe.rowCount) return res.status(400).json({ error: "Email or username already exists." });
+    if (dupe.rowCount) {
+      return res.status(400).json({ error: "Email or username already exists." });
+    }
 
+    // Hash the password
     const hash = await bcrypt.hash(password, 12);
 
+    // Insert user
     const result = await pool.query(
       `INSERT INTO users (first_name, last_name, email, username, password_hash, address, city, zip_code)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -39,7 +46,10 @@ registerRouter.post("/", async (req, res) => {
       [firstName, lastName, e, u, hash, address, city, zipCode]
     );
 
-    res.status(201).json({ message: "User registered successfully", user: result.rows[0] });
+    res.status(201).json({
+      message: "User registered successfully",
+      user: result.rows[0],
+    });
   } catch (error) {
     console.error("Registration Error:", error);
     res.status(500).json({ error: "Server error. Please try again later." });
