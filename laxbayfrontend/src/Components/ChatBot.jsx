@@ -37,7 +37,6 @@ export default function ChatBot() {
       }
 
       if (!res.body) {
-        // Fallback to non-stream
         const fallback = await fetch(`${API_BASE_URL}/store/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
