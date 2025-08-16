@@ -46,9 +46,10 @@ function parseFilters(text = "") {
   const loc = t.match(/\bin\s+([a-z\s]+?)(?:[.,;]|$)/);
   if (loc) location = loc[1].trim();
 
+  // Only capture category when explicitly stated as "category ..."
   let category = null;
-  const cat = t.match(/\b(category|type)\s+(?:is\s+)?([a-z\s]+)/);
-  if (cat) category = cat[2].trim();
+  const cat = t.match(/\bcategory\s+(?:is\s+)?([a-z\s]+)/);
+  if (cat) category = cat[1].trim();
 
   return {
     minPrice: Number.isFinite(minPrice) ? minPrice : null,
@@ -124,57 +125,47 @@ async function embedText(s) {
   return vec;
 }
 
-/* ===== SQL where builder (with index offset) ===== */
-function buildWhere(filters, startIndex = 1, tableAlias = "") {
-  const a = tableAlias ? `${tableAlias}.` : "";
-  const parts = [];
-  const params = [];
-  let i = startIndex;
-
-  if (filters.minPrice != null) { parts.push(`${a}price >= $${i++}`); params.push(filters.minPrice); }
-  if (filters.maxPrice != null) { parts.push(`${a}price <= $${i++}`); params.push(filters.maxPrice); }
-  if (filters.location)         { parts.push(`LOWER(${a}location) LIKE LOWER($${i++})`); params.push(`%${filters.location}%`); }
-  if (filters.category)         { parts.push(`LOWER(${a}category) LIKE LOWER($${i++})`); params.push(`%${filters.category}%`); }
-
-  return { whereSql: parts.length ? `WHERE ${parts.join(" AND ")}` : "", params, nextIndex: i };
-}
-
-/* ===== Retrieval queries ===== */
+/* ===== Retrieval: keyword (OR terms) ===== */
 async function keywordListings(prompt, filters) {
   const terms = termsForKeyword(prompt);
+  const parts = [];
+  const params = [];
+  let i = 1;
 
-  // 1) Build filter WHERE ($1..$N)
-  const { whereSql, params, nextIndex } = buildWhere(filters, 1, "p");
+  if (filters.minPrice != null) { parts.push(`p.price >= $${i++}`); params.push(filters.minPrice); }
+  if (filters.maxPrice != null) { parts.push(`p.price <= $${i++}`); params.push(filters.maxPrice); }
+  if (filters.location)         { parts.push(`LOWER(p.location) LIKE LOWER($${i++})`); params.push(`%${filters.location}%`); }
+  if (filters.category)         { parts.push(`LOWER(p.category) LIKE LOWER($${i++})`); params.push(`%${filters.category}%`); }
 
-  // 2) Append term clauses continuing the index
-  const likeClauses = [];
-  let i = nextIndex;
+  const termClauses = [];
   for (const t of terms) {
-    likeClauses.push(`(p.title ILIKE $${i} OR p.description ILIKE $${i})`);
+    termClauses.push(`(p.title ILIKE $${i} OR p.description ILIKE $${i})`);
     params.push(`%${t}%`);
     i++;
   }
 
-  const whereCombined =
-    whereSql
-      ? (likeClauses.length ? `${whereSql} AND ${likeClauses.join(" AND ")}` : whereSql)
-      : (likeClauses.length ? `WHERE ${likeClauses.join(" AND ")}` : "");
+  const where =
+    parts.length && termClauses.length
+      ? `WHERE ${parts.join(" AND ")} AND (${termClauses.join(" OR ")})`
+      : parts.length
+        ? `WHERE ${parts.join(" AND ")}`
+        : termClauses.length
+          ? `WHERE ${termClauses.join(" OR ")}`
+          : "";
 
-  // 3) LIMIT placeholder
-  const limitIndex = params.length + 1;
   params.push(MAX_LISTINGS);
-
   const sql = `
     SELECT p.id, p.title, p.description, p.price, p.category, p.location
       FROM postings p
-      ${whereCombined}
+      ${where}
      ORDER BY p.id DESC
-     LIMIT $${limitIndex};
+     LIMIT $${params.length};
   `;
   const { rows } = await pool.query(sql, params);
   return rows;
 }
 
+/* ===== Retrieval: vector (LEFT JOIN keeps rows without embeddings) ===== */
 async function vectorListings(prompt, filters) {
   let vec;
   try {
@@ -183,26 +174,33 @@ async function vectorListings(prompt, filters) {
     return [];
   }
 
-  // $1 is always the vector
   const vecLiteral = `[${vec.join(",")}]`;
-  const args = [vecLiteral];
+  const args = [vecLiteral]; // $1 is the vector
+  const parts = [];
+  let i = 2;
 
-  // Filters start at $2 and qualify columns with alias p
-  const { whereSql, params } = buildWhere(filters, 2, "p");
-  args.push(...params);
+  if (filters.minPrice != null) { parts.push(`p.price >= $${i++}`); args.push(filters.minPrice); }
+  if (filters.maxPrice != null) { parts.push(`p.price <= $${i++}`); args.push(filters.maxPrice); }
+  if (filters.location)         { parts.push(`LOWER(p.location) LIKE LOWER($${i++})`); args.push(`%${filters.location}%`); }
+  if (filters.category)         { parts.push(`LOWER(p.category) LIKE LOWER($${i++})`); args.push(`%${filters.category}%`); }
 
-  // LIMIT is last
+  const where = parts.length ? `WHERE ${parts.join(" AND ")}` : "";
+
   const limitIndex = args.length + 1;
   args.push(MAX_LISTINGS);
 
   const sql = `
-    SELECT p.id, p.title, p.description, p.price, p.category, p.location,
-           1 - (pe.embedding <=> $1::vector) AS similarity
-      FROM posting_embeddings pe
-      JOIN postings p ON p.id = pe.posting_id
-      ${whereSql}
-     ORDER BY pe.embedding <=> $1::vector ASC
-     LIMIT $${limitIndex};
+    SELECT
+      p.id, p.title, p.description, p.price, p.category, p.location,
+      CASE WHEN pe.embedding IS NULL
+           THEN NULL
+           ELSE 1 - (pe.embedding <=> $1::vector)
+      END AS similarity
+    FROM postings p
+    LEFT JOIN posting_embeddings pe ON pe.posting_id = p.id
+    ${where}
+    ORDER BY (pe.embedding IS NULL), pe.embedding <=> $1::vector ASC NULLS LAST
+    LIMIT $${limitIndex};
   `;
   const { rows } = await pool.query(sql, args);
   return rows;
@@ -216,11 +214,12 @@ function mergeResults(keywordRows = [], vectorRows = []) {
     const prev = map.get(r.id);
     const vs = typeof r.similarity === "number" ? r.similarity : 0.0;
     if (prev) {
-      prev.score = Math.max(prev.score, 0.5 + vs * 0.5);
+      prev.score = Math.max(prev.score, 0.5 + (vs * 0.5));
     } else {
-      map.set(r.id, { ...r, score: 0.5 + vs * 0.5 });
+      map.set(r.id, { ...r, score: 0.5 + (vs * 0.5) });
     }
   }
+
   return Array.from(map.values())
     .sort((a, b) => (b.score || 0) - (a.score || 0))
     .slice(0, MAX_LISTINGS);
