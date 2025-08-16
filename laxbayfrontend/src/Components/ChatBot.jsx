@@ -144,7 +144,6 @@ export default function ChatBot() {
         </button>
       </div>
 
-      {/* Suggested items (buttons) */}
       {suggestions.length > 0 && (
         <div className="mt-6 border-t pt-4">
           <h3 className="text-lg font-semibold mb-3">Related listings</h3>
@@ -152,7 +151,7 @@ export default function ChatBot() {
             {suggestions.map((it) => (
               <button
                 key={it.id}
-                onClick={() => navigate(`/postdetails/${it.id}`)} {/* fixed typo */}
+                onClick={() => navigate(`/postdetails/${it.id}`)}
                 className="w-full text-left p-3 rounded border hover:shadow bg-white"
                 title={it.title}
               >
@@ -165,4 +164,7 @@ export default function ChatBot() {
             ))}
           </div>
         </div>
-      )
+      )}
+    </div>
+  );
+}
