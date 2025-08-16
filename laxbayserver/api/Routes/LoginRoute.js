@@ -1,29 +1,35 @@
-// api/Routes/LoginRoute.js
 import express from "express";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";   // swapped from bcrypt → bcryptjs
 import pool from "./PoolConnection.js";
 
 const loginRouter = express.Router();
 
 loginRouter.post("/", async (req, res) => {
   const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: "Please fill in all fields" });
+  if (!email || !password) {
+    return res.status(400).json({ error: "Please fill in all fields" });
+  }
 
   try {
-    const { rows } = await pool.query(
-      "SELECT * FROM users WHERE lower(email) = lower($1)",
-      [String(email).trim().toLowerCase()]
-    );
-    if (!rows.length) return res.status(400).json({ error: "Invalid email or password" });
+    const emailNorm = String(email).trim().toLowerCase();
+
+    // Fetch user by email
+    const { rows } = await pool.query("SELECT * FROM users WHERE lower(email) = lower($1)", [emailNorm]);
+    if (!rows.length) {
+      return res.status(400).json({ error: "Invalid email or password" });
+    }
     const user = rows[0];
 
+    // Compare against password_hash (fallback to plaintext only if still migrating)
     const ok = user.password_hash
       ? await bcrypt.compare(password, user.password_hash)
-      : (user.password && user.password === password); // TEMP compatibility
+      : (user.password && user.password === password);
 
-    if (!ok) return res.status(400).json({ error: "Invalid email or password" });
+    if (!ok) {
+      return res.status(400).json({ error: "Invalid email or password" });
+    }
 
-    // minimal session
+    // Create session
     req.session.userId = user.id;
     req.session.username = user.username;
     req.session.role = user.role || "user";
@@ -38,7 +44,7 @@ loginRouter.post("/", async (req, res) => {
         username: user.username,
         city: user.city,
         zipCode: user.zip_code,
-        role: req.session.role
+        role: req.session.role,
       },
     });
   } catch (error) {
