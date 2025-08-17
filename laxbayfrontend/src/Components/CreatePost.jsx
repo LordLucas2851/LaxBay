@@ -25,10 +25,10 @@ const CATEGORY_MAP = {
   mesh: "Mesh/Strings",
   strings: "Mesh/Strings",
   accessories: "Accessories",
-  sticks: "Complete Sticks", // your old option → canonical
+  sticks: "Complete Sticks", // legacy
 };
 
-const CreatePost = () => {
+export default function CreatePost() {
   const navigate = useNavigate();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -45,7 +45,7 @@ const CreatePost = () => {
     setImagePreview(URL.createObjectURL(file));
   };
 
-  // Client-side validation aligned with backend (don’t be stricter than server)
+  // Keep client validation aligned with server (don’t be stricter)
   const validateForm = () => {
     const errs = {};
     if (!title.trim()) errs.title = "Title is required.";
@@ -54,7 +54,6 @@ const CreatePost = () => {
       errs.price = "Price must be a positive number.";
     }
     if (!category) errs.category = "Category is required.";
-    // Image is optional on the server; keep required in UI if you prefer
     if (!image) errs.image = "Image is required.";
     return errs;
   };
@@ -66,29 +65,46 @@ const CreatePost = () => {
     setErrors(formErrors);
     if (Object.keys(formErrors).length > 0) return;
 
-    // Map category to canonical value the server accepts
+    // Map category to canonical value
     const catKey = String(category).toLowerCase().trim();
     const canonicalCategory = CATEGORY_MAP[catKey] || category;
-
     if (!CANON_CATEGORIES.includes(canonicalCategory)) {
       setErrors({ category: "Please select a valid category." });
       return;
     }
 
-    const formData = new FormData();
-    formData.append("title", title.trim());
-    formData.append("description", description.trim());
-    formData.append("price", String(price).trim());
-    formData.append("category", canonicalCategory);
-    formData.append("location", sessionStorage.getItem("city") || "");
-
-    if (image) formData.append("image", image);
-
     try {
-      const resp = await axios.post(`${API_BASE_URL}/store/create`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+      // 1) Ask backend for a presigned URL
+      const presign = await axios.post(
+        `${API_BASE_URL}/uploads/presign`,
+        { filename: image.name, contentType: image.type },
+        { withCredentials: true }
+      );
+      const { uploadUrl, key, publicUrl } = presign.data;
+
+      // 2) Upload file directly to storage
+      await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": image.type },
+        body: image,
+      });
+
+      // 3) Create the listing (server will derive public URL from key, or we can send publicUrl)
+      const payload = {
+        title: title.trim(),
+        description: description.trim(),
+        price: String(price).trim(),
+        category: canonicalCategory,
+        location: sessionStorage.getItem("city") || "",
+        imageKey: key,        // preferred
+        // imageUrl: publicUrl // optional alternative
+      };
+
+      const resp = await axios.post(`${API_BASE_URL}/store/create`, payload, {
+        headers: { "Content-Type": "application/json" },
         withCredentials: true,
       });
+
       console.log(resp.data);
       alert("Post created successfully!");
       navigate("/");
@@ -144,7 +160,6 @@ const CreatePost = () => {
           required
         >
           <option value="">Select Category</option>
-          {/* Use canonical values to avoid 400s */}
           <option value="Heads">Heads</option>
           <option value="Shafts">Shafts</option>
           <option value="Complete Sticks">Complete Sticks</option>
@@ -182,6 +197,4 @@ const CreatePost = () => {
       </form>
     </div>
   );
-};
-
-export default CreatePost;
+}
