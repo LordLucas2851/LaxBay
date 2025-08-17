@@ -8,6 +8,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import axios from "axios";
+import helmet from "helmet";
 
 // Routers
 import registerRouter from "./Routes/RegisterRoute.js";
@@ -19,6 +20,7 @@ import adminRouter from "./Routes/AdminRoute.js";
 import searchRouter from "./Routes/SearchRoute.js";
 import listingRouter from "./Routes/ListingRoute.js";
 import userRouter from "./Routes/UserRoute.js";
+import uploadsRouter from "./Routes/UploadsRoute.js"; // NEW
 
 // DB pool
 import pool from "./Routes/PoolConnection.js";
@@ -27,6 +29,9 @@ dotenv.config();
 
 const app = express();
 app.set("trust proxy", 1);
+
+// Security headers
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
 // ---------- Local uploads dir (legacy compatibility) ----------
 const __filename = fileURLToPath(import.meta.url);
@@ -145,9 +150,8 @@ app.get("/api/_debug/uploads-bases", (_req, res) => {
 });
 
 // ---------- API routes ----------
-// Mount chat FIRST so it doesn't get shadowed by the generic /api/store router.
 app.use("/api/store/chat", chatBotRouter);
-
+app.use("/api/uploads", uploadsRouter);           // NEW presign route
 app.use("/api/store/register", registerRouter);
 app.use("/api/store/login", loginRouter);
 app.use("/api/store/create", postingRouter);
