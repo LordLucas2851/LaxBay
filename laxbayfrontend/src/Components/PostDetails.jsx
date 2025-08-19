@@ -5,13 +5,18 @@ import { useParams } from "react-router-dom";
 // ✅ Use the standardized env var that includes /api
 const API = import.meta.env.VITE_API_BASE_URL;
 
-// Build proper image URL: strip trailing /api and prepend /uploads (if needed)
+// Build proper image URL: handle data-URLs, absolute URLs, and legacy /uploads/*
 const getImageUrl = (imagePath) => {
   if (!imagePath) return "";
   const normalized = String(imagePath).replace(/\\/g, "/");
-  // If backend already returned a full URL, use it
+
+  // 1) data-URL from DB
+  if (/^data:image\//i.test(normalized)) return normalized;
+
+  // 2) already absolute (S3/CDN/etc.)
   if (/^https?:\/\//i.test(normalized)) return normalized;
-  // Remove trailing /api from API base to get origin
+
+  // 3) legacy relative path (e.g., "uploads/foo.jpg")
   const origin = (API || "").replace(/\/api\/?$/, "");
   return `${origin}/${normalized.replace(/^\/+/, "")}`;
 };
@@ -22,7 +27,6 @@ export default function PostDetails() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
 
-  // Defensive: compute detail URLs once
   const urls = useMemo(() => {
     return {
       details: `${API}/store/postdetails/${postId}`,
@@ -41,7 +45,6 @@ export default function PostDetails() {
 
         setPost(response.data);
 
-        // Fetch seller email (depends on your UserRoute)
         if (response.data?.username) {
           try {
             const emailRes = await axios.get(urls.emailFor(response.data.username), {
@@ -71,24 +74,32 @@ export default function PostDetails() {
   }, [urls]);
 
   if (error) {
-    return (
-      <div className="p-6 max-w-3xl mx-auto text-red-600">
-        {error}
-      </div>
-    );
+    return <div className="p-6 max-w-3xl mx-auto text-red-600">{error}</div>;
   }
 
   if (!post) return <p className="p-6">Loading...</p>;
+
+  const img = getImageUrl(post.image);
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <h2 className="text-2xl font-bold mb-4">{post.title}</h2>
 
-      <img
-        src={getImageUrl(post.image)}
-        alt={post.title}
-        className="w-full max-h-[400px] object-contain bg-white"
-      />
+      {img ? (
+        <img
+          src={img}
+          alt={post.title}
+          className="w-full max-h-[400px] object-contain bg-white"
+          onError={(e) => {
+            // avoid broken icon
+            e.currentTarget.src = "";
+          }}
+        />
+      ) : (
+        <div className="w-full max-h-[400px] h-64 bg-gray-100 grid place-items-center text-gray-400">
+          No image
+        </div>
+      )}
 
       <p className="mt-4 text-lg">{post.description}</p>
       <p className="font-semibold text-xl mt-4">${post.price}</p>
