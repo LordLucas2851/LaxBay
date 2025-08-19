@@ -1,7 +1,7 @@
-// api/Routes/UserPostsRoute.js
 import express from "express";
 import multer from "multer";
 import pool from "./PoolConnection.js";
+import { validateOptionalPriceAndCategory } from "./validators.js";
 
 const router = express.Router();
 
@@ -26,14 +26,27 @@ function extractImageData(req) {
   }
   if (req.file?.buffer) {
     const mime = req.file.mimetype || "image/png";
+    if (!/^image\/(png|jpe?g|webp)$/i.test(mime)) {
+      return { error: "Only PNG, JPEG, or WEBP images are allowed" };
+    }
     const b64 = req.file.buffer.toString("base64");
     return `data:${mime};base64,${b64}`;
   }
   return undefined; // no change
 }
 
-/* ===================== NEW: list your own posts ===================== */
-// GET /api/store/user/posts   (returns [] if none)
+// NEW: support presigned updates via imageKey/imageUrl
+async function resolveImageFromBody(body = {}) {
+  const { imageKey, imageUrl } = body;
+  if (imageUrl && /^https?:\/\//i.test(String(imageUrl))) return String(imageUrl);
+  if (imageKey) {
+    const { objectPublicUrl } = await import("./s3Client.js");
+    return objectPublicUrl(String(imageKey));
+  }
+  return undefined; // means "no change" unless multipart/dataURL provided
+}
+
+/* ===================== list your own posts ===================== */
 router.get(["/posts", "/my", "/mine"], async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
@@ -43,8 +56,6 @@ router.get(["/posts", "/my", "/mine"], async (req, res) => {
       `SELECT * FROM postings WHERE username = $1 ORDER BY id DESC`,
       [username]
     );
-
-    // Always 200 with an array (possibly empty)
     res.json(rows);
   } catch (err) {
     console.error("Owner list error:", err);
@@ -52,9 +63,7 @@ router.get(["/posts", "/my", "/mine"], async (req, res) => {
   }
 });
 
-/* ===================== existing endpoints ===================== */
-
-// GET /api/store/user/post(s)/:id
+/* ===================== get single owned post ===================== */
 router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
@@ -72,8 +81,7 @@ router.get(["/post/:id", "/posts/:id"], async (req, res) => {
   }
 });
 
-// PUT /api/store/user/update/:id  or /posts/:id
-// Supports partial updates and ignores empty strings
+/* ===================== update owned post ===================== */
 router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
@@ -87,7 +95,23 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
     if (owned.length === 0) return res.status(403).json({ error: "Not your post or not found" });
 
     const { title = "", description = "", price = "", category = "", location = "" } = req.body;
-    const imageValue = extractImageData(req);
+
+    // Validate optional fields
+    const vErr = validateOptionalPriceAndCategory({ price, category });
+    if (vErr) return res.status(400).json({ error: vErr });
+
+    // Image (either presigned input or file/dataURL). undefined => no change
+    const presignedUrl = await resolveImageFromBody(req.body);
+    const imageValue = presignedUrl !== undefined ? presignedUrl : extractImageData(req);
+    if (imageValue && typeof imageValue === "object" && imageValue.error) {
+      return res.status(400).json({ error: imageValue.error });
+    }
+
+    const params = [
+      title, description, price, category, location,
+      imageValue === undefined ? null : imageValue, // if undefined, ignore
+      req.params.id, username
+    ];
 
     const { rows } = await pool.query(
       `UPDATE postings
@@ -99,7 +123,7 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
              image       = COALESCE($6, image)
        WHERE id = $7 AND username = $8
        RETURNING *`,
-      [title, description, price, category, location, imageValue, req.params.id, username]
+      params
     );
 
     res.json(rows[0]);
@@ -109,7 +133,7 @@ router.put(["/update/:id", "/posts/:id"], upload.single("image"), async (req, re
   }
 });
 
-// Image-only endpoint for owners
+/* ===================== image-only endpoint for owners ===================== */
 router.post(["/posts/:id/image", "/update/:id/image"], upload.single("image"), async (req, res) => {
   try {
     const username = mustBeAuthed(req, res);
@@ -121,8 +145,15 @@ router.post(["/posts/:id/image", "/update/:id/image"], upload.single("image"), a
     );
     if (owned.length === 0) return res.status(403).json({ error: "Not your post or not found" });
 
-    const imageValue = extractImageData(req);
+    // Allow presigned route usage here too
+    const presignedUrl = await resolveImageFromBody(req.body);
+    const directImg = extractImageData(req);
+    const imageValue = presignedUrl || directImg;
+
     if (!imageValue) return res.status(400).json({ error: "No image provided" });
+    if (typeof imageValue === "object" && imageValue.error) {
+      return res.status(400).json({ error: imageValue.error });
+    }
 
     const { rows } = await pool.query(
       `UPDATE postings SET image = $1 WHERE id = $2 RETURNING *`,
@@ -132,6 +163,24 @@ router.post(["/posts/:id/image", "/update/:id/image"], upload.single("image"), a
   } catch (err) {
     console.error("Owner image-only update error:", err);
     res.status(500).json({ error: "Server error updating image" });
+  }
+});
+
+/* ===================== delete owned post (NEW) ===================== */
+router.delete(["/posts/:id", "/delete/:id"], async (req, res) => {
+  try {
+    const username = mustBeAuthed(req, res);
+    if (!username) return;
+
+    const { rowCount } = await pool.query(
+      `DELETE FROM postings WHERE id = $1 AND username = $2`,
+      [req.params.id, username]
+    );
+    if (rowCount === 0) return res.status(404).json({ error: "Not found" });
+    res.status(204).send();
+  } catch (err) {
+    console.error("Owner delete error:", err);
+    res.status(500).json({ error: "Server error deleting post" });
   }
 });
 
