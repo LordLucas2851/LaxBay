@@ -1,17 +1,16 @@
-// frontend/src/pages/ListingPage.jsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../apiClient";
 
-// Inline helper: data-URLs, absolute URLs, and legacy /uploads/*
+// Normalize backend base and build robust image srcs
 const API = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 const imgSrc = (raw) => {
   if (!raw) return "";
   const s = String(raw).replace(/\\/g, "/");
-  if (/^data:image\//i.test(s)) return s;               // DB data URL
-  if (/^https?:\/\//i.test(s)) return s;                // absolute URL
-  const origin = API.replace(/\/api\/?$/, "");          // backend origin
-  return `${origin}/${s.replace(/^\/+/, "")}`;          // legacy /uploads/*
+  if (/^data:image\//i.test(s)) return s;            // data URL in DB
+  if (/^https?:\/\//i.test(s)) return s;             // absolute URL (S3/R2/CDN)
+  const origin = API.replace(/\/api\/?$/, "");       // backend origin
+  return `${origin}/${s.replace(/^\/+/, "")}`;       // legacy /uploads/*
 };
 
 export default function ListingPage() {
@@ -27,12 +26,11 @@ export default function ListingPage() {
       setLoading(true);
       setFetchError(null);
       try {
-        // Works with your backend aliases: /store/listings | /store/postings | /store/posts
         const res = await apiClient.get("/store/listings", { withCredentials: true });
         if (alive) setListings(Array.isArray(res.data) ? res.data : []);
       } catch (err) {
         console.error("Failed to fetch listings:", err);
-        if (alive) setFetchError(err?.message || "Failed to load listings.");
+        if (alive) setFetchError(err?.response?.data?.error || err?.message || "Failed to load listings.");
       } finally {
         if (alive) setLoading(false);
       }
@@ -65,22 +63,31 @@ export default function ListingPage() {
           <div
             key={post.id}
             onClick={() => toggleExpand(post.id)}
-            className="border p-4 rounded shadow bg-white hover:shadow-lg transition-transform transform hover:scale-105 cursor-pointer"
+            className="border p-4 rounded shadow bg-white hover:shadow-lg transition-transform hover:scale-[1.01] cursor-pointer"
           >
-            <img
-              src={imgSrc(post.image)}
-              alt={post.title}
-              className="w-full h-40 object-cover rounded"
-              onError={(e) => { e.currentTarget.src = ""; }} // avoid broken icon
-              loading="lazy"
-            />
-            <h3 className="text-xl font-bold mt-2">{post.title}</h3>
+            {imgSrc(post.image) ? (
+              <img
+                src={imgSrc(post.image)}
+                alt={post.title}
+                className="w-full h-40 object-cover rounded"
+                onError={(e) => { e.currentTarget.src = ""; }}
+                loading="lazy"
+              />
+            ) : (
+              <div className="w-full h-40 bg-gray-100 grid place-items-center rounded text-gray-400">
+                No image
+              </div>
+            )}
+
+            <h3 className="text-xl font-bold mt-2 line-clamp-2">{post.title}</h3>
             <p className="text-sm text-gray-600 mb-2">{post.location}</p>
 
             {expandedPostId === post.id && (
               <>
                 <p className="text-sm mb-2">{post.description}</p>
-                <p className="text-md font-bold mb-2">${post.price}</p>
+                <p className="text-md font-bold mb-2">
+                  {post.price != null ? `$${Number(post.price)}` : ""}
+                </p>
               </>
             )}
 
@@ -88,10 +95,9 @@ export default function ListingPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  // keep your existing details route:
                   navigate(`/postdetails/${post.id}`);
                 }}
-                className="w-full py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                className="w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
               >
                 View
               </button>
